@@ -79,6 +79,10 @@ const plugins = readJson(marketplacePath).plugins;
 // install.sh's per-platform handling without needing a shell.
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
 const cacheDir = join(claudeDir, "plugins", "cache", MARKETPLACE);
+// Durable copy of the marketplace source. Claude Code needs source.path to stay
+// valid for catalog refresh and updates, so we copy the payload under claudeDir
+// rather than pointing at the npm/npx package dir, which is reclaimable.
+const installRoot = join(claudeDir, "plugins", "marketplaces", MARKETPLACE);
 const settingsPath = join(claudeDir, "settings.json");
 
 console.log(`Claude config : ${claudeDir}`);
@@ -122,6 +126,20 @@ for (const plugin of plugins) {
   console.log(`  [OK] ${name}`);
 }
 
+// ── Copy the marketplace source to a durable location under claudeDir ───────────
+// This is what settings.json points at, so marketplace refresh/updates keep
+// working even after the (reclaimable) npm/npx package directory is cleaned up.
+rmSync(installRoot, { recursive: true, force: true });
+mkdirSync(installRoot, { recursive: true });
+for (const sub of [".claude-plugin", "plugins"]) {
+  const from = join(PACKAGE_ROOT, sub);
+  if (existsSync(from)) cpSync(from, join(installRoot, sub), { recursive: true });
+}
+for (const file of ["README.md", "LICENSE"]) {
+  const from = join(PACKAGE_ROOT, file);
+  if (existsSync(from)) cpSync(from, join(installRoot, file));
+}
+
 // ── Register plugins in settings.json (read-merge-write, replaces the Python) ───
 console.log("");
 console.log(`Updating ${settingsPath} ...`);
@@ -133,7 +151,7 @@ for (const plugin of plugins) {
 }
 const marketplaces = (cfg.extraKnownMarketplaces ??= {});
 marketplaces[MARKETPLACE] = {
-  source: { source: "directory", path: PACKAGE_ROOT },
+  source: { source: "directory", path: installRoot },
 };
 
 writeFileSync(settingsPath, JSON.stringify(cfg, null, 2) + "\n");
