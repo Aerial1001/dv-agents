@@ -18,7 +18,8 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MARKETPLACE="digital-chip-design-agents"
-VERSION="1.0.0"
+# Each plugin's cache version is read from its own .claude-plugin/plugin.json
+# below, so plugins at different versions land in the correct path.
 
 # ── Parse flags ───────────────────────────────────────────────────────────────
 IDE="claude"
@@ -74,6 +75,7 @@ PLUGINS=(
   "chip-design-firmware"
   "chip-design-fpga"
   "chip-design-infrastructure"
+  "chip-design-meta"
 )
 
 # ── Plugin → source directory mapping ────────────────────────────────────────
@@ -92,6 +94,7 @@ declare -A PLUGIN_DIRS=(
   ["chip-design-firmware"]="firmware"
   ["chip-design-fpga"]="fpga"
   ["chip-design-infrastructure"]="infrastructure"
+  ["chip-design-meta"]="meta"
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -125,7 +128,8 @@ if [[ "$IDE" == "claude" || "$IDE" == "all" ]]; then
   for plugin in "${PLUGINS[@]}"; do
     subdir="${PLUGIN_DIRS[$plugin]}"
     src="$REPO_DIR/plugins/$subdir"
-    dest="$CACHE_DIR/$plugin/$VERSION"
+    version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$src/.claude-plugin/plugin.json")"
+    dest="$CACHE_DIR/$plugin/$version"
     rm -rf "$dest"
     mkdir -p "$dest"
     cp -r "$src/agents"         "$dest/"
@@ -151,6 +155,7 @@ plugins = [
   "chip-design-sta",          "chip-design-hls",       "chip-design-pd",
   "chip-design-soc",          "chip-design-compiler",  "chip-design-firmware",
   "chip-design-fpga",         "chip-design-infrastructure",
+  "chip-design-meta",
 ]
 
 cfg = {}
@@ -175,7 +180,7 @@ print(f"  [OK] {len(plugins)} plugins enabled in settings.json")
 PYEOF
 
   echo ""
-  echo "Done! Restart Claude Code to activate all 14 plugins."
+  echo "Done! Restart Claude Code to activate all 15 plugins."
 
 fi  # end Claude Code block
 

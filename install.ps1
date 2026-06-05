@@ -24,7 +24,8 @@ $ErrorActionPreference = "Stop"
 
 $RepoDir     = $PSScriptRoot
 $Marketplace = "digital-chip-design-agents"
-$Version     = "1.0.0"
+# Each plugin's cache version is read from its own .claude-plugin\plugin.json
+# below, so plugins at different versions land in the correct path.
 
 # ── Locate python3 ────────────────────────────────────────────────────────────
 $Python = "python3"
@@ -51,7 +52,8 @@ $Plugins = @(
     "chip-design-sta",           "chip-design-hls",
     "chip-design-pd",            "chip-design-soc",
     "chip-design-compiler",      "chip-design-firmware",
-    "chip-design-fpga",          "chip-design-infrastructure"
+    "chip-design-fpga",          "chip-design-infrastructure",
+    "chip-design-meta"
 )
 
 $PluginDirs = @{
@@ -69,6 +71,7 @@ $PluginDirs = @{
     "chip-design-firmware"       = "firmware"
     "chip-design-fpga"           = "fpga"
     "chip-design-infrastructure" = "infrastructure"
+    "chip-design-meta"           = "meta"
 }
 
 # Helper: run a Python script stored in a temp file, then clean up
@@ -108,6 +111,9 @@ if ($IDE -eq "claude" -or $IDE -eq "all") {
     foreach ($Plugin in $Plugins) {
         $Subdir = $PluginDirs[$Plugin]
         $Src    = Join-Path $RepoDir "plugins\$Subdir"
+        $PluginJson = Join-Path $Src ".claude-plugin\plugin.json"
+        $Version = & $Python -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" $PluginJson
+        if ($LASTEXITCODE -ne 0) { throw "Failed to read version from $PluginJson" }
         $Dest   = Join-Path $CacheDir "$Plugin\$Version"
 
         if (Test-Path $Dest) { Remove-Item $Dest -Recurse -Force }
@@ -140,6 +146,7 @@ plugins = [
   "chip-design-sta",          "chip-design-hls",       "chip-design-pd",
   "chip-design-soc",          "chip-design-compiler",  "chip-design-firmware",
   "chip-design-fpga",         "chip-design-infrastructure",
+  "chip-design-meta",
 ]
 
 cfg = {}
@@ -165,7 +172,7 @@ print(f"  [OK] {len(plugins)} plugins enabled in settings.json")
     Invoke-PythonScript -ScriptContent $SettingsPy -Args @($Settings, $Marketplace, $RepoDir)
 
     Write-Host ""
-    Write-Host "Done! Restart Claude Code to activate all 14 plugins."
+    Write-Host "Done! Restart Claude Code to activate all 15 plugins."
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

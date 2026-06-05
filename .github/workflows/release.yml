@@ -102,3 +102,52 @@ jobs:
           prerelease: ${{ contains(steps.version.outputs.VERSION, 'rc') || contains(steps.version.outputs.VERSION, 'beta') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  npm-publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    needs: validate
+    # Only runs when an NPM_TOKEN secret is configured; otherwise it is skipped.
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    steps:
+      - name: Checkout
+        if: env.NPM_TOKEN != ''
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        if: env.NPM_TOKEN != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Extract version
+        if: env.NPM_TOKEN != ''
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Stamp tag version into package.json and manifests
+        if: env.NPM_TOKEN != ''
+        run: |
+          node -e "
+          const fs = require('fs');
+          const tag = process.env.VERSION.replace(/^v/, '');
+          const stamp = (p, mut) => { const d = JSON.parse(fs.readFileSync(p)); mut(d); fs.writeFileSync(p, JSON.stringify(d, null, 2) + '\n'); };
+          stamp('package.json', d => d.version = tag);
+          stamp('.claude-plugin/marketplace.json', d => d.metadata.version = tag);
+          for (const dir of fs.readdirSync('plugins')) {
+            const p = 'plugins/' + dir + '/.claude-plugin/plugin.json';
+            if (fs.existsSync(p)) stamp(p, d => d.version = tag);
+          }
+          console.log('Stamped version ' + tag);
+          "
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+
+      - name: Publish to npm
+        if: env.NPM_TOKEN != ''
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
