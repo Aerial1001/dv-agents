@@ -17,7 +17,7 @@ plugin into your Claude Code plugin cache and enables them in `settings.json`,
 then you restart Claude Code:
 
 ```bash
-npx @chuanseng-ng/digital-chip-design-agents
+npx digital-chip-design-agents
 ```
 
 Re-run the same command to pick up future updates. Works identically on macOS,

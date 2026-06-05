@@ -2,8 +2,8 @@
 // install.mjs — installs digital-chip-design-agents plugins for Claude Code.
 //
 // Usage (via npm):
-//   npx @chuanseng-ng/digital-chip-design-agents            # Claude Code (default)
-//   npx @chuanseng-ng/digital-chip-design-agents --ide claude
+//   npx digital-chip-design-agents            # Claude Code (default)
+//   npx digital-chip-design-agents --ide claude
 //
 // This is the cross-platform Node port of the Claude Code path of install.sh.
 // It runs as a single process and copies each plugin sequentially, so there is
@@ -44,10 +44,10 @@ for (let i = 0; i < argv.length; i++) {
   } else if (arg === "--global") {
     // accepted for flag-parity with install.sh; only affects non-claude IDEs
   } else if (arg === "-h" || arg === "--help") {
-    console.log("Usage: npx @chuanseng-ng/digital-chip-design-agents [--ide claude]");
+    console.log("Usage: npx digital-chip-design-agents [--ide claude]");
     process.exit(0);
   } else {
-    fail(`Unknown argument: ${arg}\nUsage: npx @chuanseng-ng/digital-chip-design-agents [--ide claude]`);
+    fail(`Unknown argument: ${arg}\nUsage: npx digital-chip-design-agents [--ide claude]`);
   }
 }
 

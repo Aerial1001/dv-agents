@@ -1,5 +1,5 @@
 {
-  "name": "@chuanseng-ng/digital-chip-design-agents",
+  "name": "digital-chip-design-agents",
   "version": "1.3.0",
   "description": "Full digital chip design pipeline — 15 Claude Code plugins across 14 domains, from infrastructure setup through tape-out and firmware, with closed-loop verification↔RTL feedback.",
   "type": "module",
