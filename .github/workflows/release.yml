@@ -17,10 +17,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
@@ -94,7 +94,7 @@ jobs:
           EOF
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           files: digital-chip-design-agents-${{ steps.version.outputs.VERSION }}.tar.gz
           body_path: release_notes.md
@@ -102,3 +102,56 @@ jobs:
           prerelease: ${{ contains(steps.version.outputs.VERSION, 'rc') || contains(steps.version.outputs.VERSION, 'beta') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  npm-publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    needs: validate
+    # Only runs when an NPM_TOKEN secret is configured; otherwise it is skipped.
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    steps:
+      - name: Checkout
+        if: env.NPM_TOKEN != ''
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # The publish job only reads, stamps locally, and runs `npm publish` —
+          # it never pushes to git, so the GITHUB_TOKEN need not be persisted.
+          persist-credentials: false
+
+      - name: Set up Node.js
+        if: env.NPM_TOKEN != ''
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Extract version
+        if: env.NPM_TOKEN != ''
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Stamp tag version into package.json and manifests
+        if: env.NPM_TOKEN != ''
+        run: |
+          node -e "
+          const fs = require('fs');
+          const tag = process.env.VERSION.replace(/^v/, '');
+          const stamp = (p, mut) => { const d = JSON.parse(fs.readFileSync(p)); mut(d); fs.writeFileSync(p, JSON.stringify(d, null, 2) + '\n'); };
+          stamp('package.json', d => d.version = tag);
+          stamp('.claude-plugin/marketplace.json', d => d.metadata.version = tag);
+          for (const dir of fs.readdirSync('plugins')) {
+            const p = 'plugins/' + dir + '/.claude-plugin/plugin.json';
+            if (fs.existsSync(p)) stamp(p, d => d.version = tag);
+          }
+          console.log('Stamped version ' + tag);
+          "
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+
+      - name: Publish to npm
+        if: env.NPM_TOKEN != ''
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

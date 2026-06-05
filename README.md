@@ -9,7 +9,23 @@
 
 ## Install
 
-### Option A — Install script (recommended)
+### Option A — npm (recommended, no clone)
+
+If you have Node.js (≥18), install and enable all 15 plugins with a single
+command — no `git clone` and no Python required. The installer copies each
+plugin into your Claude Code plugin cache and enables them in `settings.json`,
+then you restart Claude Code:
+
+```bash
+npx digital-chip-design-agents
+```
+
+Re-run the same command to pick up future updates. Works identically on macOS,
+Linux, and Windows (a single Node process copies plugins sequentially, so there
+is no concurrent-write contention on the cache directory). This currently
+installs the Claude Code plugins only; for other IDEs use Option D below.
+
+### Option B — Install script
 
 Clone the repo and run one script — all 15 plugins are installed and enabled in a
 single step, no repeated commands needed.
@@ -30,7 +46,7 @@ cd digital-chip-design-agents
 
 Restart Claude Code after running — all 16 skills and 15 agents will be active.
 
-### Option B — Marketplace (selective install)
+### Option C — Marketplace (selective install)
 
 If you only need specific domains, install them individually via the Claude Code
 marketplace. First register the marketplace, then install the domains you need:
@@ -60,7 +76,7 @@ marketplace. First register the marketplace, then install the domains you need:
 
 </details>
 
-### Option C — Other AI assistants (Copilot / Gemini / OpenCode / Codex CLI)
+### Option D — Other AI assistants (Copilot / Gemini / OpenCode / Codex CLI)
 
 Run the install script from your chip design project directory with `--ide`:
 

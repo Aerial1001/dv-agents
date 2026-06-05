@@ -1,0 +1,46 @@
+{
+  "name": "digital-chip-design-agents",
+  "version": "1.3.0",
+  "description": "Full digital chip design pipeline — 15 Claude Code plugins across 14 domains, from infrastructure setup through tape-out and firmware, with closed-loop verification↔RTL feedback.",
+  "type": "module",
+  "bin": {
+    "digital-chip-design-agents": "bin/install.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/",
+    "plugins/",
+    "ides/",
+    ".claude-plugin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "chip-design",
+    "asic",
+    "fpga",
+    "rtl",
+    "verilog",
+    "systemverilog",
+    "eda",
+    "vlsi",
+    "agents"
+  ],
+  "homepage": "https://github.com/chuanseng-ng/digital-chip-design-agents#readme",
+  "bugs": {
+    "url": "https://github.com/chuanseng-ng/digital-chip-design-agents/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chuanseng-ng/digital-chip-design-agents.git"
+  },
+  "author": {
+    "name": "chuanseng-ng",
+    "url": "https://github.com/chuanseng-ng"
+  },
+  "license": "MIT"
+}
