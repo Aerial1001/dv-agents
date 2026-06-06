@@ -8,7 +8,7 @@
 // Detection performs no writes and spawns no processes — it only inspects
 // PATH entries and checks for directories.
 
-import { existsSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join, delimiter } from "node:path";
 
@@ -27,9 +27,15 @@ function onPath(bin) {
       const candidateUpper = join(dir, bin + ext);
       for (const c of new Set([candidate, candidateUpper])) {
         try {
-          if (statSync(c).isFile()) return c;
+          if (!statSync(c).isFile()) continue;
+          // On Windows the PATHEXT match is the executability signal; elsewhere
+          // require the execute bit so we match the shell's `command -v` contract
+          // (a non-executable file on PATH is not an installed CLI).
+          if (isWin) return c;
+          accessSync(c, constants.X_OK);
+          return c;
         } catch {
-          /* not here, keep looking */
+          /* not here / not executable, keep looking */
         }
       }
     }

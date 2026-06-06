@@ -33,6 +33,12 @@ YES="false"
 while [[ $# -gt 0 ]]; do
   case $1 in
     --ide)
+      # Guard against a trailing `--ide` so `set -u` doesn't abort on $2 before
+      # the user sees a usage message.
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --ide requires a value: claude|copilot|gemini|opencode|codex|all|auto"
+        exit 1
+      fi
       IDE="$2"; shift 2
       ;;
     --global)
@@ -84,6 +90,18 @@ is_installed() {
   esac
 }
 
+# Where each target writes, so the confirmation shows repo vs $HOME vs config dir.
+# Mirrors the destinations in bin/detect.mjs and the per-IDE install blocks below.
+destination_for() {
+  case "$1" in
+    claude)   echo "${CLAUDE_CONFIG_DIR:-$HOME/.claude} (global plugin cache)" ;;
+    codex)    [[ "$GLOBAL" == "true" ]] && echo "$HOME/.codex/instructions.md" || echo "$PWD/AGENTS.md" ;;
+    opencode) [[ "$GLOBAL" == "true" ]] && echo "$HOME/.config/opencode/config.json" || echo "$PWD/opencode.json" ;;
+    gemini)   [[ "$GLOBAL" == "true" ]] && echo "$HOME/GEMINI.md" || echo "$PWD/GEMINI.md" ;;
+    copilot)  echo "$PWD/.github" ;;
+  esac
+}
+
 # ── Plugin list ───────────────────────────────────────────────────────────────
 PLUGINS=(
   "chip-design-architecture"
@@ -132,7 +150,7 @@ if [[ -z "$IDE" || "$IDE" == "auto" ]]; then
   detected=()
   for t in "${ALL_TARGETS[@]}"; do
     if is_installed "$t"; then
-      detected+=("$t"); echo "  [found] $t"
+      detected+=("$t"); echo "  [found] $t -> $(destination_for "$t")"
     else
       echo "  [  -  ] $t"
     fi

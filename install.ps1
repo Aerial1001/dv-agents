@@ -116,6 +116,23 @@ function Test-AgentInstalled {
     return $false
 }
 
+# Where each target writes, so the confirmation shows repo vs $HOME vs config dir.
+# Mirrors bin/detect.mjs and the per-IDE install blocks below.
+function Get-AgentDestination {
+    param([string]$Id)
+    switch ($Id) {
+        "claude" {
+            $cdir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE ".claude" }
+            return "$cdir (global plugin cache)"
+        }
+        "codex"    { if ($Global) { return (Join-Path $env:USERPROFILE ".codex\instructions.md") } else { return (Join-Path (Get-Location).Path "AGENTS.md") } }
+        "opencode" { if ($Global) { return (Join-Path $env:USERPROFILE ".config\opencode\config.json") } else { return (Join-Path (Get-Location).Path "opencode.json") } }
+        "gemini"   { if ($Global) { return (Join-Path $env:USERPROFILE "GEMINI.md") } else { return (Join-Path (Get-Location).Path "GEMINI.md") } }
+        "copilot"  { return (Join-Path (Get-Location).Path ".github") }
+    }
+    return ""
+}
+
 # ── Build the selection set ───────────────────────────────────────────────────
 $AllTargets = @("claude","codex","opencode","gemini","copilot")
 $Sel = @{}
@@ -125,7 +142,7 @@ if ([string]::IsNullOrEmpty($IDE) -or $IDE -eq "auto") {
     Write-Host ""
     $detected = @()
     foreach ($t in $AllTargets) {
-        if (Test-AgentInstalled $t) { $detected += $t; Write-Host "  [found] $t" }
+        if (Test-AgentInstalled $t) { $detected += $t; Write-Host "  [found] $t -> $(Get-AgentDestination $t)" }
         else { Write-Host "  [  -  ] $t" }
     }
     if ($detected.Count -eq 0) {

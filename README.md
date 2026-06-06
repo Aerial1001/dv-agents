@@ -43,8 +43,9 @@ concurrent-write contention on the cache directory).
 
 Clone the repo and run one script. Like the npm installer, running it with no
 flags **auto-detects your installed agents** and installs to them after a
-confirmation (add `--yes` / `-Yes` to skip the prompt). The shell scripts require
-`python3`; for a Python-free install use the npm path (Option A).
+confirmation (add `--yes` / `-y` on `install.sh`, or `-Yes` on `install.ps1`, to
+skip the prompt). The shell scripts require `python3`; for a Python-free install
+use the npm path (Option A).
 
 **macOS / Linux / Git Bash:**
 ```bash
