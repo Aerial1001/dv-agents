@@ -1,23 +1,29 @@
 # install.ps1 - installs digital-chip-design-agents plugins
 #
 # Usage:
-#   .\install.ps1                           # Claude Code (default)
+#   .\install.ps1                           # auto-detect installed agents + confirm
+#   .\install.ps1 -Yes                      # auto-detect, no confirmation prompt
 #   .\install.ps1 -IDE claude               # Claude Code (explicit)
 #   .\install.ps1 -IDE copilot              # GitHub Copilot (.github\ in cwd)
 #   .\install.ps1 -IDE gemini               # Gemini Code Assist (GEMINI.md in cwd)
 #   .\install.ps1 -IDE gemini -Global       # Gemini global (~\GEMINI.md)
 #   .\install.ps1 -IDE opencode             # OpenCode (opencode.json in cwd)
 #   .\install.ps1 -IDE opencode -Global     # OpenCode global (~\.config\opencode\)
-#   .\install.ps1 -IDE codex               # OpenAI Codex CLI (AGENTS.md in cwd)
-#   .\install.ps1 -IDE codex -Global       # OpenAI Codex CLI global (~\.codex\instructions.md)
-#   .\install.ps1 -IDE all                  # Claude Code + all five IDEs (copilot, gemini, opencode, codex)
+#   .\install.ps1 -IDE codex                # OpenAI Codex CLI (AGENTS.md in cwd)
+#   .\install.ps1 -IDE codex -Global        # OpenAI Codex CLI global (~\.codex\instructions.md)
+#   .\install.ps1 -IDE all                  # Claude Code + all four other IDEs (copilot, gemini, opencode, codex)
+#
+# With no -IDE the script detects which of the five supported agents
+# (claude, codex, opencode, gemini, copilot) are present and installs to them
+# after a confirmation prompt. Passing -IDE bypasses detection.
 #
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet("claude","copilot","gemini","opencode","codex","all")]
-    [string]$IDE = "claude",
-    [switch]$Global
+    [ValidateSet("","auto","claude","copilot","gemini","opencode","codex","all")]
+    [string]$IDE = "",
+    [switch]$Global,
+    [switch]$Yes
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -26,17 +32,8 @@ $RepoDir     = $PSScriptRoot
 $Marketplace = "digital-chip-design-agents"
 # Each plugin's cache version is read from its own .claude-plugin\plugin.json
 # below, so plugins at different versions land in the correct path.
-
-# ── Locate python3 ────────────────────────────────────────────────────────────
+# python3 is located lazily below — only the non-Claude generators need it.
 $Python = "python3"
-if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) {
-    if (Get-Command python -ErrorAction SilentlyContinue) {
-        $Python = "python"
-    } else {
-        Write-Error "python3 (or python) is required but not found in PATH."
-        exit 1
-    }
-}
 
 # ── Shared sanity checks ──────────────────────────────────────────────────────
 if (-not (Test-Path (Join-Path $RepoDir ".claude-plugin\marketplace.json"))) {
@@ -87,10 +84,99 @@ function Invoke-PythonScript {
     }
 }
 
+# ── Detection (read-only) ─────────────────────────────────────────────────────
+# A target counts as installed if its CLI is on PATH or its config dir exists.
+# Mirrors bin\detect.mjs. Copilot is project-scoped, so it is detected only via
+# the gh / copilot CLI.
+function Test-AgentInstalled {
+    param([string]$Id)
+    switch ($Id) {
+        "claude" {
+            if (Get-Command claude -ErrorAction SilentlyContinue) { return $true }
+            $cdir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE ".claude" }
+            return (Test-Path $cdir)
+        }
+        "codex" {
+            if (Get-Command codex -ErrorAction SilentlyContinue) { return $true }
+            return (Test-Path (Join-Path $env:USERPROFILE ".codex"))
+        }
+        "opencode" {
+            if (Get-Command opencode -ErrorAction SilentlyContinue) { return $true }
+            return (Test-Path (Join-Path $env:USERPROFILE ".config\opencode"))
+        }
+        "gemini" {
+            if (Get-Command gemini -ErrorAction SilentlyContinue) { return $true }
+            return (Test-Path (Join-Path $env:USERPROFILE ".gemini"))
+        }
+        "copilot" {
+            if (Get-Command copilot -ErrorAction SilentlyContinue) { return $true }
+            return [bool](Get-Command gh -ErrorAction SilentlyContinue)
+        }
+    }
+    return $false
+}
+
+# ── Build the selection set ───────────────────────────────────────────────────
+$AllTargets = @("claude","codex","opencode","gemini","copilot")
+$Sel = @{}
+
+if ([string]::IsNullOrEmpty($IDE) -or $IDE -eq "auto") {
+    Write-Host "Detecting installed AI coding agents..."
+    Write-Host ""
+    $detected = @()
+    foreach ($t in $AllTargets) {
+        if (Test-AgentInstalled $t) { $detected += $t; Write-Host "  [found] $t" }
+        else { Write-Host "  [  -  ] $t" }
+    }
+    if ($detected.Count -eq 0) {
+        Write-Host ""
+        Write-Host "No supported agents detected. Install one explicitly with:"
+        Write-Host "  .\install.ps1 -IDE claude   (or copilot|gemini|opencode|codex|all)"
+        exit 0
+    }
+    $doPrompt = (-not $Yes) -and (-not [Console]::IsInputRedirected)
+    if ($doPrompt) {
+        Write-Host ""
+        $ans = (Read-Host 'Install to all detected targets? [Y/n] (or list a subset, e.g. "claude,codex")').Trim().ToLower()
+        if ($ans -eq "" -or $ans -eq "y" -or $ans -eq "yes") {
+            foreach ($t in $detected) { $Sel[$t] = $true }
+        } elseif ($ans -eq "n" -or $ans -eq "no") {
+            Write-Host "Aborted."; exit 0
+        } else {
+            foreach ($p in ($ans -split ",")) {
+                $p = $p.Trim()
+                if ($detected -contains $p) { $Sel[$p] = $true }
+            }
+        }
+    } else {
+        foreach ($t in $detected) { $Sel[$t] = $true }
+        Write-Host ""
+        Write-Host "Installing to all detected targets."
+    }
+} elseif ($IDE -eq "all") {
+    foreach ($t in $AllTargets) { $Sel[$t] = $true }
+} else {
+    $Sel[$IDE] = $true
+}
+
+if ($Sel.Count -eq 0) { Write-Host "Nothing selected. Aborted."; exit 0 }
+
+# ── python3 is required for every target in the shell installer ───────────────
+# (Even the Claude block reads plugin versions and merges settings.json via
+# Python.) The Python-free path is the npm installer: npx digital-chip-design-agents.
+if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) {
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        $Python = "python"
+    } else {
+        Write-Error "python3 (or python) is required by install.ps1 but was not found in PATH. For a Python-free install, use: npx digital-chip-design-agents"
+        exit 1
+    }
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Claude Code install
 # ═══════════════════════════════════════════════════════════════════════════════
-if ($IDE -eq "claude" -or $IDE -eq "all") {
+if ($Sel.ContainsKey("claude")) {
 
     $ClaudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR }
                  else { Join-Path $env:USERPROFILE ".claude" }
@@ -178,7 +264,7 @@ print(f"  [OK] {len(plugins)} plugins enabled in settings.json")
 # ═══════════════════════════════════════════════════════════════════════════════
 # GitHub Copilot install
 # ═══════════════════════════════════════════════════════════════════════════════
-if ($IDE -eq "copilot" -or $IDE -eq "all") {
+if ($Sel.ContainsKey("copilot")) {
 
     Write-Host ""
     Write-Host "Installing GitHub Copilot instructions..."
@@ -223,7 +309,7 @@ print('Commit .github/ to share domain rules with your team.')
 # ═══════════════════════════════════════════════════════════════════════════════
 # Gemini Code Assist install
 # ═══════════════════════════════════════════════════════════════════════════════
-if ($IDE -eq "gemini" -or $IDE -eq "all") {
+if ($Sel.ContainsKey("gemini")) {
 
     Write-Host ""
     Write-Host "Installing Gemini Code Assist context file..."
@@ -281,7 +367,7 @@ print('  (' + str(len(skill_files)) + ' domains, ' + str(len(skill_files) + len(
 # ═══════════════════════════════════════════════════════════════════════════════
 # OpenCode install
 # ═══════════════════════════════════════════════════════════════════════════════
-if ($IDE -eq "opencode" -or $IDE -eq "all") {
+if ($Sel.ContainsKey("opencode")) {
 
     Write-Host ""
     Write-Host "Installing OpenCode config..."
@@ -357,7 +443,7 @@ print('  Use /mode chip-<domain> in OpenCode to activate a domain.')
 # ═══════════════════════════════════════════════════════════════════════════════
 # OpenAI Codex CLI install
 # ═══════════════════════════════════════════════════════════════════════════════
-if ($IDE -eq "codex" -or $IDE -eq "all") {
+if ($Sel.ContainsKey("codex")) {
 
     Write-Host ""
     Write-Host "Installing OpenAI Codex CLI context file..."

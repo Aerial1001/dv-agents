@@ -11,24 +11,40 @@
 
 ### Option A — npm (recommended, no clone)
 
-If you have Node.js (≥18), install and enable all 15 plugins with a single
-command — no `git clone` and no Python required. The installer copies each
-plugin into your Claude Code plugin cache and enables them in `settings.json`,
-then you restart Claude Code:
+If you have Node.js (≥18), run a single command — no `git clone` and no Python
+required. With no flags the installer **detects which AI coding agents you have
+installed** (Claude Code, OpenAI Codex, OpenCode, Gemini, GitHub Copilot), shows
+what it found and where each would write, and installs to them after a
+confirmation:
 
 ```bash
-npx digital-chip-design-agents
+npx digital-chip-design-agents            # detect installed agents + confirm
+npx digital-chip-design-agents --yes      # detect + install, no prompt (CI-friendly)
 ```
 
-Re-run the same command to pick up future updates. Works identically on macOS,
-Linux, and Windows (a single Node process copies plugins sequentially, so there
-is no concurrent-write contention on the cache directory). This currently
-installs the Claude Code plugins only; for other IDEs use Option D below.
+Detection treats an agent as installed if its CLI is on `PATH` **or** its config
+directory exists (e.g. `~/.claude`, `~/.codex`, `~/.config/opencode`,
+`~/.gemini`). For Claude Code it copies every plugin into your plugin cache and
+enables them in `settings.json`; for the others it generates the matching context
+files (see Option D). All five targets are handled natively in Node — no Python.
+
+To target a specific agent (or all of them) explicitly and skip detection:
+
+```bash
+npx digital-chip-design-agents --ide claude     # or codex | opencode | gemini | copilot | all
+npx digital-chip-design-agents --ide gemini --global
+```
+
+Re-run any of these to pick up future updates. Works identically on macOS, Linux,
+and Windows (a single Node process copies plugins sequentially, so there is no
+concurrent-write contention on the cache directory).
 
 ### Option B — Install script
 
-Clone the repo and run one script — all 15 plugins are installed and enabled in a
-single step, no repeated commands needed.
+Clone the repo and run one script. Like the npm installer, running it with no
+flags **auto-detects your installed agents** and installs to them after a
+confirmation (add `--yes` / `-Yes` to skip the prompt). The shell scripts require
+`python3`; for a Python-free install use the npm path (Option A).
 
 **macOS / Linux / Git Bash:**
 ```bash
@@ -78,7 +94,10 @@ marketplace. First register the marketplace, then install the domains you need:
 
 ### Option D — Other AI assistants (Copilot / Gemini / OpenCode / Codex CLI)
 
-Run the install script from your chip design project directory with `--ide`:
+These targets are auto-detected by Options A and B, but you can also install one
+explicitly. The npm installer (`npx digital-chip-design-agents --ide <target>`)
+and the shell scripts both support every target natively; run from your chip
+design project directory with `--ide`:
 
 ```bash
 # GitHub Copilot — creates .github/instructions/ in your project

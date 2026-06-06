@@ -2,16 +2,21 @@
 # install.sh — installs digital-chip-design-agents plugins
 #
 # Usage:
-#   bash install.sh                         # Claude Code (default)
+#   bash install.sh                         # auto-detect installed agents + confirm
+#   bash install.sh --yes                   # auto-detect, no confirmation prompt
 #   bash install.sh --ide claude            # Claude Code (explicit)
 #   bash install.sh --ide copilot           # GitHub Copilot (.github/ in cwd)
 #   bash install.sh --ide gemini            # Gemini Code Assist (GEMINI.md in cwd)
 #   bash install.sh --ide gemini --global   # Gemini global (~/GEMINI.md)
 #   bash install.sh --ide opencode          # OpenCode (opencode.json in cwd)
 #   bash install.sh --ide opencode --global # OpenCode global (~/.config/opencode/)
-#   bash install.sh --ide codex          # OpenAI Codex CLI (AGENTS.md in cwd)
-#   bash install.sh --ide codex --global  # OpenAI Codex CLI global (~/.codex/instructions.md)
-#   bash install.sh --ide all               # Claude Code + all five IDEs (copilot, gemini, opencode, codex)
+#   bash install.sh --ide codex             # OpenAI Codex CLI (AGENTS.md in cwd)
+#   bash install.sh --ide codex --global    # OpenAI Codex CLI global (~/.codex/instructions.md)
+#   bash install.sh --ide all               # Claude Code + all four other IDEs (copilot, gemini, opencode, codex)
+#
+# With no --ide flag the script detects which of the five supported agents
+# (claude, codex, opencode, gemini, copilot) are present and installs to them
+# after a confirmation prompt. Passing --ide bypasses detection.
 #
 # Works on macOS, Linux, and Git Bash / MSYS2 on Windows.
 set -euo pipefail
@@ -22,8 +27,9 @@ MARKETPLACE="digital-chip-design-agents"
 # below, so plugins at different versions land in the correct path.
 
 # ── Parse flags ───────────────────────────────────────────────────────────────
-IDE="claude"
+IDE=""
 GLOBAL="false"
+YES="false"
 while [[ $# -gt 0 ]]; do
   case $1 in
     --ide)
@@ -32,32 +38,51 @@ while [[ $# -gt 0 ]]; do
     --global)
       GLOBAL="true"; shift
       ;;
+    --yes|-y)
+      YES="true"; shift
+      ;;
+    -h|--help)
+      echo "Usage: bash install.sh [--ide claude|copilot|gemini|opencode|codex|all] [--global] [--yes]"
+      echo "  With no --ide, detects installed agents and installs to them after confirmation."
+      exit 0
+      ;;
     *)
       echo "Unknown argument: $1"
-      echo "Usage: bash install.sh [--ide claude|copilot|gemini|opencode|codex|all] [--global]"
+      echo "Usage: bash install.sh [--ide claude|copilot|gemini|opencode|codex|all] [--global] [--yes]"
       exit 1
       ;;
   esac
 done
 
-case "$IDE" in
-  claude|copilot|gemini|opencode|codex|all) ;;
-  *)
-    echo "ERROR: --ide must be one of: claude, copilot, gemini, opencode, codex, all"
-    exit 1
-    ;;
-esac
-
-# ── Shared sanity checks ──────────────────────────────────────────────────────
-if ! command -v python3 &>/dev/null; then
-  echo "ERROR: python3 is required but not found in PATH."
-  exit 1
+if [[ -n "$IDE" && "$IDE" != "auto" ]]; then
+  case "$IDE" in
+    claude|copilot|gemini|opencode|codex|all) ;;
+    *)
+      echo "ERROR: --ide must be one of: claude, copilot, gemini, opencode, codex, all, auto"
+      exit 1
+      ;;
+  esac
 fi
 
+# ── Shared sanity check ───────────────────────────────────────────────────────
 if [[ ! -f "$REPO_DIR/.claude-plugin/marketplace.json" ]]; then
   echo "ERROR: Cannot locate repo root. Ensure install.sh is inside the cloned repo."
   exit 1
 fi
+
+# ── Detection (read-only) ─────────────────────────────────────────────────────
+# A target counts as installed if its CLI is on PATH or its config dir exists.
+# Mirrors bin/detect.mjs. Copilot is project-scoped, so it is detected only via
+# the gh / copilot CLI.
+is_installed() {
+  case "$1" in
+    claude)   command -v claude   >/dev/null 2>&1 || [[ -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" ]] ;;
+    codex)    command -v codex    >/dev/null 2>&1 || [[ -d "$HOME/.codex" ]] ;;
+    opencode) command -v opencode >/dev/null 2>&1 || [[ -d "$HOME/.config/opencode" ]] ;;
+    gemini)   command -v gemini   >/dev/null 2>&1 || [[ -d "$HOME/.gemini" ]] ;;
+    copilot)  command -v copilot  >/dev/null 2>&1 || command -v gh >/dev/null 2>&1 ;;
+  esac
+}
 
 # ── Plugin list ───────────────────────────────────────────────────────────────
 PLUGINS=(
@@ -97,10 +122,70 @@ declare -A PLUGIN_DIRS=(
   ["chip-design-meta"]="meta"
 )
 
+# ── Build the selection set ───────────────────────────────────────────────────
+declare -A SEL=()
+ALL_TARGETS=(claude codex opencode gemini copilot)
+
+if [[ -z "$IDE" || "$IDE" == "auto" ]]; then
+  echo "Detecting installed AI coding agents..."
+  echo ""
+  detected=()
+  for t in "${ALL_TARGETS[@]}"; do
+    if is_installed "$t"; then
+      detected+=("$t"); echo "  [found] $t"
+    else
+      echo "  [  -  ] $t"
+    fi
+  done
+  if [[ ${#detected[@]} -eq 0 ]]; then
+    echo ""
+    echo "No supported agents detected. Install one explicitly with:"
+    echo "  bash install.sh --ide claude   (or copilot|gemini|opencode|codex|all)"
+    exit 0
+  fi
+  if [[ "$YES" != "true" && -t 0 ]]; then
+    echo ""
+    read -r -p 'Install to all detected targets? [Y/n] (or list a subset, e.g. "claude,codex"): ' ans
+    ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+    case "$ans" in
+      ""|y|yes) for t in "${detected[@]}"; do SEL[$t]=1; done ;;
+      n|no)     echo "Aborted."; exit 0 ;;
+      *)
+        IFS=',' read -ra picks <<< "$ans"
+        for p in "${picks[@]}"; do
+          for t in "${detected[@]}"; do [[ "$p" == "$t" ]] && SEL[$t]=1; done
+        done
+        ;;
+    esac
+  else
+    for t in "${detected[@]}"; do SEL[$t]=1; done
+    echo ""
+    echo "Installing to all detected targets."
+  fi
+elif [[ "$IDE" == "all" ]]; then
+  for t in "${ALL_TARGETS[@]}"; do SEL[$t]=1; done
+else
+  SEL[$IDE]=1
+fi
+
+if [[ ${#SEL[@]} -eq 0 ]]; then
+  echo "Nothing selected. Aborted."
+  exit 0
+fi
+
+# ── python3 is required for every target in the shell installer ───────────────
+# (Even the Claude block reads plugin versions and merges settings.json via
+# python3.) The Python-free path is the npm installer: npx digital-chip-design-agents.
+if ! command -v python3 &>/dev/null; then
+  echo "ERROR: python3 is required by install.sh but was not found in PATH."
+  echo "  For a Python-free install, use: npx digital-chip-design-agents"
+  exit 1
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Claude Code install
 # ═══════════════════════════════════════════════════════════════════════════════
-if [[ "$IDE" == "claude" || "$IDE" == "all" ]]; then
+if [[ -n "${SEL[claude]:-}" ]]; then
 
   # Locate Claude config dir
   if [[ -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
@@ -187,7 +272,7 @@ fi  # end Claude Code block
 # ═══════════════════════════════════════════════════════════════════════════════
 # GitHub Copilot install
 # ═══════════════════════════════════════════════════════════════════════════════
-if [[ "$IDE" == "copilot" || "$IDE" == "all" ]]; then
+if [[ -n "${SEL[copilot]:-}" ]]; then
 
   echo ""
   echo "Installing GitHub Copilot instructions..."
@@ -235,7 +320,7 @@ fi  # end Copilot block
 # ═══════════════════════════════════════════════════════════════════════════════
 # Gemini Code Assist install
 # ═══════════════════════════════════════════════════════════════════════════════
-if [[ "$IDE" == "gemini" || "$IDE" == "all" ]]; then
+if [[ -n "${SEL[gemini]:-}" ]]; then
 
   echo ""
   echo "Installing Gemini Code Assist context file..."
@@ -295,7 +380,7 @@ fi  # end Gemini block
 # ═══════════════════════════════════════════════════════════════════════════════
 # OpenCode install
 # ═══════════════════════════════════════════════════════════════════════════════
-if [[ "$IDE" == "opencode" || "$IDE" == "all" ]]; then
+if [[ -n "${SEL[opencode]:-}" ]]; then
 
   echo ""
   echo "Installing OpenCode config..."
@@ -377,7 +462,7 @@ fi  # end OpenCode block
 # ═══════════════════════════════════════════════════════════════════════════════
 # OpenAI Codex CLI install
 # ═══════════════════════════════════════════════════════════════════════════════
-if [[ "$IDE" == "codex" || "$IDE" == "all" ]]; then
+if [[ -n "${SEL[codex]:-}" ]]; then
 
   echo ""
   echo "Installing OpenAI Codex CLI context file..."
