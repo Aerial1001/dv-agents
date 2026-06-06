@@ -143,3 +143,41 @@ line for the same `run_id` — overwrite the existing line.
 in the session, also emit each applied fix as an observation to entity
 `chip-design-<domain>-fixes`. Skip silently if the tool is absent — JSONL is the canonical
 record; claude-mem is a supplemental cross-session search index only.
+
+## Distilling New Knowledge
+
+After enough runs accumulate (default threshold: 5 records), merge new learnings back
+into `knowledge.md`:
+
+```text
+/chip-design-infrastructure:memory-keeper --domain synthesis
+/chip-design-infrastructure:memory-keeper --all --min-records 10
+```
+
+The `memory-keeper` skill reads the JSONL records, identifies new issue/fix patterns and
+tool flags not already captured, and updates the relevant sections of `knowledge.md`
+without discarding still-valid content.
+
+## QoR Trend Analysis
+
+Track how key metrics evolve across runs for a named design with `tools/qor_trends.py`:
+
+```bash
+# Text table for all domains where design "aes_core" appears
+python3 tools/qor_trends.py --design aes_core
+
+# WNS trend for synthesis only, with regression alerts
+python3 tools/qor_trends.py --design aes_core --domain synthesis --metric wns_ns
+
+# Save a matplotlib chart
+python3 tools/qor_trends.py --design aes_core --plot --output aes_core_qor.png
+
+# Compare area/timing across sky130 vs gf180mcu
+python3 tools/qor_trends.py --design aes_core --domain synthesis --group-by pdk
+
+# Compare Yosys vs DC for the same design on sky130, with a grouped chart
+python3 tools/qor_trends.py --design aes_core --pdk sky130 --group-by tool --plot
+```
+
+Regression alerts fire automatically when a metric moves in the wrong direction between
+runs (e.g. WNS degrades, coverage drops).

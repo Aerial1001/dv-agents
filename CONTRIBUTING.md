@@ -113,3 +113,20 @@ for d in os.listdir('skills'):
 - `PATCH` (x.x.1) — fixes or clarifications within existing skills
 - `MINOR` (x.1.0) — new skill or orchestrator domain added
 - `MAJOR` (2.0.0) — breaking change to frontmatter schema or stage interface
+
+## Shared metadata in plugin.json
+
+Each `plugins/<domain>/.claude-plugin/plugin.json` repeats the same `author`,
+`homepage`, `repository`, and `license` fields. These are intentional — the
+plugin installer reads each manifest in isolation and requires these fields to
+be present. The canonical values are:
+
+```json
+"author":     { "name": "chuanseng-ng", "url": "https://github.com/chuanseng-ng" },
+"homepage":   "https://github.com/chuanseng-ng/digital-chip-design-agents",
+"repository": "https://github.com/chuanseng-ng/digital-chip-design-agents",
+"license":    "MIT"
+```
+
+When updating these fields, change all 14 `plugin.json` files and
+`.claude-plugin/marketplace.json` together.
