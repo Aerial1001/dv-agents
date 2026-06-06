@@ -44,18 +44,26 @@ jobs:
           VERSION: ${{ steps.version.outputs.VERSION }}
 
       - name: Build release archive
+        id: archive
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
-          tar -czf digital-chip-design-agents-${VERSION}.tar.gz \
+          ARCHIVE="${RUNNER_TEMP}/digital-chip-design-agents-${VERSION}.tar.gz"
+          # Write the archive outside the repo workspace so tar never sees its
+          # own output file appear inside the directory it is reading (which
+          # triggers "tar: .: file changed as we read it" and an exit-1 failure).
+          tar -czf "$ARCHIVE" \
             --exclude='.git' \
             --exclude='*.tar.gz' \
             .
-          echo "Archive: digital-chip-design-agents-${VERSION}.tar.gz"
-          ls -lh digital-chip-design-agents-${VERSION}.tar.gz
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_OUTPUT"
+          echo "Archive: $ARCHIVE"
+          ls -lh "$ARCHIVE"
 
       - name: Generate release notes
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
           SKILLS=$(find plugins -name "SKILL.md" | wc -l | tr -d ' ')
           AGENTS=$(find plugins -path "*/agents/*.md" | wc -l | tr -d ' ')
           cat << EOF > release_notes.md
@@ -96,7 +104,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
-          files: digital-chip-design-agents-${{ steps.version.outputs.VERSION }}.tar.gz
+          files: ${{ steps.archive.outputs.ARCHIVE }}
           body_path: release_notes.md
           draft: false
           prerelease: ${{ contains(steps.version.outputs.VERSION, 'rc') || contains(steps.version.outputs.VERSION, 'beta') }}
