@@ -81,11 +81,22 @@
                    "rtl_response", "history"],
       "properties": {
         "id": { "type": "string" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" },
         "created_by": { "type": "string" },
         "failure_class": {
           "enum": ["functional", "protocol", "coverage_gap", "formal_cex"]
         },
         "retry_strategy": { "$ref": "#/$defs/retryStrategy" },
+        "test_name": { "type": "string" },
+        "property_or_assertion": { "type": ["string", "null"] },
+        "seed": { "type": ["integer", "null"] },
+        "waveform_path": { "type": ["string", "null"] },
+        "log_path": { "type": ["string", "null"] },
+        "summary": { "type": "string" },
+        "expected_behavior": { "type": ["string", "null"] },
+        "observed_behavior": { "type": "string" },
+        "session_id": { "type": ["string", "null"] },
         "route_to": {
           "type": "string",
           "description": "Optional, reserved forward-compatible dispatch hint naming the servicer domain for this fix (default: 'rtl-design'). Multi-servicer dispatch is NOT yet implemented — the pipeline-orchestrator currently always dispatches the RTL orchestrator. Present so the contract is forward-compatible if additional fix-servicer domains are added later."

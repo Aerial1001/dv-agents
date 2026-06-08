@@ -143,7 +143,7 @@ jobs:
           PYEOF
 
       - name: Install schema validator
-        run: pip install --quiet jsonschema
+        run: pip install --quiet "jsonschema==4.23.0"
 
       - name: Validate design_state.json against schema
         run: |
@@ -161,10 +161,11 @@ jobs:
           base = "plugins/meta/skills/pipeline-orchestration/examples"
           rc = 0
 
-          valid_fixtures = [
-              f"{base}/design_state.fix_request.json",
-              f"{base}/design_state.checkpoint.json",
-          ]
+          # Discover every fixture under examples/ except the negative ones in invalid/,
+          # so new positive fixtures are validated automatically. Deterministic order.
+          all_fixtures = sorted(glob.glob(f"{base}/**/*.json", recursive=True))
+          valid_fixtures = [p for p in all_fixtures if f"{base}/invalid/" not in p]
+          assert valid_fixtures, "expected at least one valid fixture under examples/"
           for path in valid_fixtures:
               errs = sorted(validator.iter_errors(json.load(open(path))),
                             key=lambda e: list(e.path))
