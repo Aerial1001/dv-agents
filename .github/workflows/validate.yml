@@ -142,166 +142,52 @@ jobs:
           print("Count check PASSED")
           PYEOF
 
-      - name: Validate fix_request fixture schema
-        run: |
-          python3 << 'PYEOF'
-          import json, sys, os
-          REQUIRED_FIELDS = [
-              "id", "created_at", "updated_at", "created_by", "failure_class",
-              "test_name", "property_or_assertion", "seed", "waveform_path",
-              "log_path", "suspected_rtl", "summary", "expected_behavior",
-              "observed_behavior", "session_id", "status",
-              "rtl_response", "history"
-          ]
-          REQUIRED_SUSPECTED_RTL = ["module", "signal", "file", "line_range"]
-          VALID_FAILURE_CLASSES = {"functional", "protocol", "coverage_gap", "formal_cex"}
-          VALID_STATUSES = {"open", "claimed", "fixed", "abandoned"}
-          fixture_path = "plugins/meta/skills/pipeline-orchestration/examples/design_state.fix_request.json"
-          if not os.path.isfile(fixture_path):
-              print(f"ERROR: fixture not found: {fixture_path}", file=sys.stderr)
-              sys.exit(1)
-          d = json.load(open(fixture_path))
-          errors = []
-          VALID_FORMAT_VERSIONS = {"1.1", "1.2", "1.3", "1.4", "1.5"}
-          if d.get("format_version") not in VALID_FORMAT_VERSIONS:
-              errors.append(f"format_version must be one of {sorted(VALID_FORMAT_VERSIONS)}, got {d.get('format_version')!r}")
-          VALID_CONFIDENCE = {"high", "medium", "low"}
-          VALID_HISTORY_FC = {"none", "functional", "timing", "power_area", "drc_lvs", "coverage_gap", "connectivity", "tool_error", "spec_gap", "resource_limit"}
-          VALID_NEXT_STEP = {"proceed", "retry_stage", "escalate", "abandon"}
-          VALID_RETRY_STRATEGY = {"none", "regenerate", "refine", "escalate"}
-          # format_version 1.5: retry_strategy is the deterministic map of failure_class
-          RETRY_STRATEGY_MAP = {
-              "none": "none", "functional": "refine", "timing": "refine",
-              "power_area": "refine", "coverage_gap": "refine", "connectivity": "refine",
-              "drc_lvs": "regenerate", "tool_error": "regenerate",
-              "spec_gap": "escalate", "resource_limit": "escalate",
-          }
-          def check_retry_strategy(h, i, append, label="history"):
-              # Only enforced at format_version 1.5; validates value + failure_class mapping.
-              rs = h.get("retry_strategy")
-              if rs not in VALID_RETRY_STRATEGY:
-                  append(f"{label}[{i}].retry_strategy missing/invalid: {rs!r}")
-                  return
-              fc = h.get("failure_class")
-              if fc in RETRY_STRATEGY_MAP and rs != RETRY_STRATEGY_MAP[fc]:
-                  append(f"{label}[{i}].retry_strategy {rs!r} != mapped {RETRY_STRATEGY_MAP[fc]!r} for failure_class {fc!r}")
-          if d.get("format_version") in {"1.2", "1.3", "1.4", "1.5"}:
-              history = d.get("history")
-              if not isinstance(history, list):
-                  errors.append("format_version >=1.2 requires history[] to be a list")
-              else:
-                  for i, h in enumerate(history):
-                      if not isinstance(h, dict):
-                          errors.append(f"history[{i}] must be an object")
-                          continue
-                      if h.get("confidence") not in VALID_CONFIDENCE:
-                          errors.append(f"history[{i}].confidence missing/invalid: {h.get('confidence')!r}")
-                      if h.get("failure_class") not in VALID_HISTORY_FC:
-                          errors.append(f"history[{i}].failure_class missing/invalid: {h.get('failure_class')!r}")
-                      sns = h.get("suggested_next_step")
-                      if not (isinstance(sns, str) and (sns in VALID_NEXT_STEP or sns.startswith("loop_back_to:"))):
-                          errors.append(f"history[{i}].suggested_next_step missing/invalid: {sns!r}")
-                      if d.get("format_version") == "1.5":
-                          check_retry_strategy(h, i, errors.append)
-          if d.get("format_version") == "1.3":
-              pc = d.get("pipeline_config", {})
-              if "checkpoints" in pc and not isinstance(pc["checkpoints"], list):
-                  errors.append("pipeline_config.checkpoints must be a list if present")
-              elif "checkpoints" in pc:
-                  for i, ck in enumerate(pc["checkpoints"]):
-                      if not isinstance(ck, str):
-                          errors.append(f"pipeline_config.checkpoints[{i}] must be a string")
-              ac = d.get("approved_checkpoints")
-              if ac is not None:
-                  if not isinstance(ac, list):
-                      errors.append("approved_checkpoints must be a list if present")
-                  else:
-                      for i, entry in enumerate(ac):
-                          if not isinstance(entry, dict) or "stage" not in entry:
-                              errors.append(f"approved_checkpoints[{i}] must be an object with 'stage'")
-              pa = d.get("pending_approval")
-              if pa is not None:
-                  if pa.get("type") not in {"checkpoint", "escalation", "constraint_gap"}:
-                      errors.append(f"pending_approval.type must be 'checkpoint', 'escalation', or 'constraint_gap', got {pa.get('type')!r}")
-          if not isinstance(d.get("fix_requests"), list) or not d["fix_requests"]:
-              errors.append("fix_requests must be a non-empty array in the fixture")
-          if not isinstance(d.get("pipeline_config"), dict):
-              errors.append("pipeline_config must be an object in the fixture")
-          elif "max_cross_domain_iterations" not in d["pipeline_config"]:
-              errors.append("pipeline_config.max_cross_domain_iterations must be present")
-          for i, fr in enumerate(d.get("fix_requests", [])):
-              for f in REQUIRED_FIELDS:
-                  if f not in fr:
-                      errors.append(f"fix_requests[{i}] missing field '{f}'")
-              if fr.get("failure_class") not in VALID_FAILURE_CLASSES:
-                  errors.append(f"fix_requests[{i}].failure_class {fr.get('failure_class')!r} not in {VALID_FAILURE_CLASSES}")
-              if fr.get("status") not in VALID_STATUSES:
-                  errors.append(f"fix_requests[{i}].status {fr.get('status')!r} not in {VALID_STATUSES}")
-              if "retry_strategy" in fr and fr["retry_strategy"] not in VALID_RETRY_STRATEGY:
-                  errors.append(f"fix_requests[{i}].retry_strategy {fr.get('retry_strategy')!r} not in {VALID_RETRY_STRATEGY}")
-              rtl = fr.get("suspected_rtl", {})
-              for f in REQUIRED_SUSPECTED_RTL:
-                  if f not in rtl:
-                      errors.append(f"fix_requests[{i}].suspected_rtl missing '{f}'")
-          if errors:
-              for e in errors: print(f"ERROR: {e}", file=sys.stderr)
-              sys.exit(1)
-          print(f"OK: {fixture_path} — {len(d['fix_requests'])} fix_request(s), format_version={d['format_version']!r}")
+      - name: Install schema validator
+        run: pip install --quiet jsonschema
 
-          # Validate checkpoint fixture (format_version 1.3)
-          checkpoint_fixture = "plugins/meta/skills/pipeline-orchestration/examples/design_state.checkpoint.json"
-          if not os.path.isfile(checkpoint_fixture):
-              print(f"ERROR: checkpoint fixture not found: {checkpoint_fixture}", file=sys.stderr)
-              sys.exit(1)
-          c = json.load(open(checkpoint_fixture))
-          cerrors = []
-          if c.get("format_version") not in VALID_FORMAT_VERSIONS:
-              cerrors.append(f"format_version must be one of {sorted(VALID_FORMAT_VERSIONS)}, got {c.get('format_version')!r}")
-          if c.get("format_version") in {"1.3", "1.4", "1.5"}:
-              pc = c.get("pipeline_config", {})
-              if not isinstance(pc.get("checkpoints"), list):
-                  cerrors.append("pipeline_config.checkpoints must be a list in 1.3+ fixture")
-              ac = c.get("approved_checkpoints")
-              if ac is None or not isinstance(ac, list):
-                  cerrors.append("approved_checkpoints must be a list in 1.3/1.4 fixture")
+      - name: Validate design_state.json against schema
+        run: |
+          # The machine-readable contract lives in docs/design_state.schema.json
+          # (enums, required fields, and the failure_class -> retry_strategy map are
+          # all encoded there). Valid fixtures must pass; negative fixtures under
+          # examples/invalid/ must be rejected.
+          python3 << 'PYEOF'
+          import json, glob, sys
+          from jsonschema import Draft202012Validator
+
+          schema = json.load(open("docs/design_state.schema.json"))
+          Draft202012Validator.check_schema(schema)
+          validator = Draft202012Validator(schema)
+          base = "plugins/meta/skills/pipeline-orchestration/examples"
+          rc = 0
+
+          valid_fixtures = [
+              f"{base}/design_state.fix_request.json",
+              f"{base}/design_state.checkpoint.json",
+          ]
+          for path in valid_fixtures:
+              errs = sorted(validator.iter_errors(json.load(open(path))),
+                            key=lambda e: list(e.path))
+              if errs:
+                  rc = 1
+                  for e in errs:
+                      loc = "/".join(map(str, e.path)) or "<root>"
+                      print(f"ERROR: {path}: {loc}: {e.message}", file=sys.stderr)
               else:
-                  for i, entry in enumerate(ac):
-                      if not isinstance(entry, dict) or "stage" not in entry:
-                          cerrors.append(f"approved_checkpoints[{i}] must have 'stage'")
-              pa = c.get("pending_approval")
-              if pa is not None and pa.get("type") not in {"checkpoint", "escalation", "constraint_gap"}:
-                  cerrors.append(f"pending_approval.type invalid: {pa.get('type')!r}")
-              hist = c.get("history", [])
-              if not isinstance(hist, list) or len(hist) == 0:
-                  cerrors.append("history[] must be a non-empty list in 1.3+ fixture")
+                  print(f"OK (valid):    {path}")
+
+          negative_fixtures = sorted(glob.glob(f"{base}/invalid/*.json"))
+          assert negative_fixtures, "expected at least one negative fixture under examples/invalid/"
+          for path in negative_fixtures:
+              errs = list(validator.iter_errors(json.load(open(path))))
+              if errs:
+                  print(f"OK (rejected): {path} — {len(errs)} schema error(s) as expected")
               else:
-                  for i, h in enumerate(hist):
-                      if not isinstance(h, dict): continue
-                      if h.get("confidence") not in VALID_CONFIDENCE:
-                          cerrors.append(f"history[{i}].confidence invalid: {h.get('confidence')!r}")
-                      if h.get("failure_class") not in VALID_HISTORY_FC:
-                          cerrors.append(f"history[{i}].failure_class invalid: {h.get('failure_class')!r}")
-                      sns = h.get("suggested_next_step")
-                      if not (isinstance(sns, str) and (sns in VALID_NEXT_STEP or sns.startswith("loop_back_to:"))):
-                          cerrors.append(f"history[{i}].suggested_next_step invalid: {sns!r}")
-                      if c.get("format_version") == "1.5":
-                          check_retry_strategy(h, i, cerrors.append)
-          if c.get("format_version") == "1.4":
-              constraints = c.get("constraints")
-              if constraints is not None:
-                  if not isinstance(constraints, dict):
-                      cerrors.append("constraints must be an object in 1.4 fixture")
-                  else:
-                      clk = constraints.get("clock", {})
-                      if clk.get("clk_mhz") is not None and not isinstance(clk["clk_mhz"], (int, float)):
-                          cerrors.append("constraints.clock.clk_mhz must be a number or null")
-                      pvt = constraints.get("pvt_corners")
-                      if pvt is not None and not isinstance(pvt, list):
-                          cerrors.append("constraints.pvt_corners must be an array or null")
-          if cerrors:
-              for e in cerrors: print(f"ERROR (checkpoint fixture): {e}", file=sys.stderr)
-              sys.exit(1)
-          print(f"OK: {checkpoint_fixture} — format_version={c.get('format_version')!r}, {len(c.get('history', []))} history entries")
+                  rc = 1
+                  print(f"ERROR: {path}: expected schema rejection but it validated clean",
+                        file=sys.stderr)
+
+          sys.exit(rc)
           PYEOF
 
       - name: Validate IDE config files

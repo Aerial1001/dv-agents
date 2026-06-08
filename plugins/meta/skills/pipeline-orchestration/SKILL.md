@@ -40,7 +40,10 @@ The protocol has three participants:
 
 ### fix_request Schema (authoritative)
 
-All entries in `design_state.fix_requests[]` must conform to this schema:
+All entries in `design_state.fix_requests[]` must conform to this schema. The
+machine-readable companion is `docs/design_state.schema.json` (JSON Schema Draft
+2020-12), which CI validates fixtures against — it is the authoritative encoding
+of the enums, required fields, and the `failure_class → retry_strategy` map below.
 
 ```json
 {
@@ -70,6 +73,13 @@ All entries in `design_state.fix_requests[]` must conform to this schema:
   "history": []
 }
 ```
+
+> **Reserved field — `route_to` (optional).** The schema accepts an optional
+> `route_to` string naming the servicer domain for a fix (default: `rtl-design`).
+> It is **forward-compatible scaffolding only**: the pipeline-orchestrator
+> currently always dispatches the RTL orchestrator (`dispatch_to_producer`), so
+> producers need not set it. It exists so multi-servicer dispatch can be added
+> later without a schema migration, mirroring the analog pipeline.
 
 `rtl_response` (populated by rtl-design-orchestrator on close):
 ```json
