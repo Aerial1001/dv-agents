@@ -71,7 +71,7 @@ Each stage must return:
 2. Enforce SystemVerilog coding standards from skill at every rtl_coding stage
 3. Escalate clearly if max iterations exceeded — show state and root cause
 4. Output: RTL package (filelist.f, all .sv files, assertions, lint/CDC reports)
-5. Read `memory/rtl-design/knowledge.md` before the first stage. Write an experience record to `memory/rtl-design/experiences.jsonl` whenever the flow terminates — including signoff, escalation, max-iterations exceeded, early error, or user interruption. If signoff was not achieved, set `signoff_achieved: false` and populate only the stages that completed.
+5. Read `<MEM>/rtl-design/knowledge.md` before the first stage. Write an experience record to `<MEM>/rtl-design/experiences.jsonl` whenever the flow terminates — including signoff, escalation, max-iterations exceeded, early error, or user interruption. If signoff was not achieved, set `signoff_achieved: false` and populate only the stages that completed.
 6. When closing a claimed `fix_request`: set `status=fixed`, populate `rtl_response` (diff_summary, files_changed, fixed_at), append an entry to that fix_request's `history[]`. Use `constraint_ref=<fix_request.id>` in the top-level `history[]` entry. Do not modify any `fix_requests[]` entry not set to `claimed` by this run.
 7. Per-stage trace: after each stage completes (PASS, FAIL, or WARN), atomically append one `history[]` entry to `design_state.json` using the stage's output `confidence`, `failure_class`, `retry_strategy`, and `suggested_next_step`. Use the 10-field schema shown in the Design State section below. Derive `retry_strategy` from `failure_class` via the mapping in the pipeline-orchestration skill (Failure Classification & Retry Strategy); `failure_class: none` ⇒ `retry_strategy: none`. Every FAIL/WARN entry must carry a non-`none` `failure_class` and its mapped `retry_strategy`; the checkpoint-gate and (where present) constraint-validation history entries below also include `retry_strategy` (`none` for `await_approval`/checkpoint; `escalate` for constraint_gap). When escalating, `pending_approval.reason` must state the `failure_class` plus what the user must supply to unblock. The last entry written is the terminal entry read by downstream orchestrators.
 8. Checkpoint gate (at `rtl_signoff` only, **unless** a `fix_request.id` was passed in the prompt — skip the gate in fix-request-servicing mode): before setting `rtl.signoff=true`, read `pipeline_config.checkpoints` and `approved_checkpoints` from `design_state.json`. If `"rtl_signoff"` is in `checkpoints` and not in `approved_checkpoints[].stage`: (a) atomic RMW — set `pending_approval = { "type": "checkpoint", "stage": "rtl_signoff", "agent": "rtl-design-orchestrator", "reason": "checkpoint rtl_signoff requires human approval before proceeding", "fix_request_id": null, "last_summary": "<QoR one-liner: lint/CDC status, module count>", "requires_user": true }`, (b) append a `history[]` entry with `decision: "await_approval"`, `confidence: "high"`, `failure_class: "none"`, `suggested_next_step: "escalate"`, (c) print the gate message, (d) halt without setting `rtl.signoff=true`. On re-invocation: if `"rtl_signoff"` is now in `approved_checkpoints[].stage`, clear `pending_approval` (set null) and proceed.
@@ -79,15 +79,25 @@ Each stage must return:
 
 ## Memory
 
+**Memory root (`<MEM>`).** Resolve the memory root once at session start, in priority
+order: (1) an explicit `--memory-root`, (2) the `$CHIP_DESIGN_MEMORY_ROOT` environment
+variable, (3) the central default
+`${XDG_DATA_HOME:-$HOME/.local/share}/chip-design-agents/digital/memory`, (4) the in-repo
+`memory/` seed as a last resort. Use the resolved absolute path as `<MEM>` for every memory
+read/write below — never the literal `memory/` directory. To print it, run the resolver:
+`python3 plugins/infrastructure/skills/memory-keeper/memory_root.py`. See the memory-keeper
+skill's "Memory Root Resolution" section.
+
+
 ### Read (session start)
-Before beginning `module_planning`, read `memory/rtl-design/knowledge.md` if it exists.
+Before beginning `module_planning`, read `<MEM>/rtl-design/knowledge.md` if it exists.
 Incorporate its guidance into stage decisions — especially known failure patterns,
 successful tool flags, and PDK-specific notes. If the file does not exist, proceed
 without it.
 
 ### Write (session end)
 After signoff (or on escalation/abandon), append one JSON line to
-`memory/rtl-design/experiences.jsonl`:
+`<MEM>/rtl-design/experiences.jsonl`:
 ```json
 {
   "timestamp": "<ISO-8601>",
@@ -116,7 +126,7 @@ Create the file and parent directories if they do not exist.
 `design_state.json` in the working directory is the shared cross-orchestrator state file.
 
 ### Read (session start)
-After reading `memory/rtl-design/knowledge.md`, read `design_state.json` if it exists.
+After reading `<MEM>/rtl-design/knowledge.md`, read `design_state.json` if it exists.
 Extract: `spec`, `interfaces`, `constraints`, `architecture`, `fix_requests`, `pipeline_config`, `approved_checkpoints`.
 If the file does not exist or fields are null, proceed with empty upstream context.
 Do not fail if any key is absent — treat missing keys as null.

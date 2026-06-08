@@ -15,14 +15,43 @@ allowed-tools: Read, Write, Bash
 ## Invocation
 
 ```text
-/chip-design-infrastructure:memory-keeper [--domain <name>] [--all] [--min-records <n>]
+/chip-design-infrastructure:memory-keeper [--domain <name>] [--all] [--min-records <n>] [--init]
 ```
 
 - `--domain <name>` — distil a single domain (e.g. `synthesis`, `sta`, `pd`)
 - `--all` — distil every domain that has an `experiences.jsonl` with enough records
 - `--min-records <n>` — minimum record count to proceed (default: 5); skip domains below threshold
+- `--init` — resolve and seed the central memory root, migrating any repo-local runtime data
+  (runs `memory_root.py --init`); no distillation. Use once after install or to inspect the location.
 
-If neither `--domain` nor `--all` is given, prompt the user to choose.
+If neither `--domain` nor `--all` nor `--init` is given, prompt the user to choose.
+
+---
+
+## Memory Root Resolution
+
+Memory does **not** live at a fixed relative `memory/` path. The active root is resolved by
+`memory_root.py` (the single source of truth that `distill.py` and `tools/qor_trends.py` import),
+in this priority order:
+
+1. an explicit `--memory-root PATH` argument
+2. the `$CHIP_DESIGN_MEMORY_ROOT` environment variable
+3. the central default `${XDG_DATA_HOME:-$HOME/.local/share}/chip-design-agents/digital/memory`
+   (Windows: `%LOCALAPPDATA%\chip-design-agents\digital\memory`)
+4. the in-repo `memory/` tree as a seed fallback (used only if the central root is unwritable)
+
+The in-repo `memory/` tree is the version-controlled **seed**: on first resolution each
+`<domain>/knowledge.md` is copied into the central root if absent (never overwriting accumulated
+data; runtime `experiences.jsonl`/`run_state.md` are never seeded). Orchestrators resolve this same
+root at session start and use it as `<MEM>` for every read/write. To print the resolved path:
+
+```bash
+python3 plugins/infrastructure/skills/memory-keeper/memory_root.py        # prints the root
+python3 plugins/infrastructure/skills/memory-keeper/memory_root.py --init  # seed + migrate + report
+```
+
+Per-project scoping (opt-out of the central store): `export CHIP_DESIGN_MEMORY_ROOT="$PWD/memory"`
+(or pass `--memory-root ./memory` to the scripts).
 
 ---
 

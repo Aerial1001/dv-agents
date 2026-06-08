@@ -66,22 +66,32 @@ Each stage must return:
 2. Track fault_coverage in state across all ATPG iterations
 3. Do not proceed to dft_signoff until SAF coverage meets target
 4. Output: DFT netlist, .scandef, ATPG patterns, BSDL file
-5. Read `memory/dft/knowledge.md` before the first stage. Write an experience record to `memory/dft/experiences.jsonl` whenever the flow terminates — including signoff, escalation, max-iterations exceeded, early error, or user interruption. If signoff was not achieved, set `signoff_achieved: false` and populate only the stages that completed.
+5. Read `<MEM>/dft/knowledge.md` before the first stage. Write an experience record to `<MEM>/dft/experiences.jsonl` whenever the flow terminates — including signoff, escalation, max-iterations exceeded, early error, or user interruption. If signoff was not achieved, set `signoff_achieved: false` and populate only the stages that completed.
 6. Per-stage trace: after each stage completes (PASS, FAIL, or WARN), atomically append one `history[]` entry to `design_state.json` using the stage's output `confidence`, `failure_class`, `retry_strategy`, and `suggested_next_step`. Use the 10-field schema shown in the Design State section below. Derive `retry_strategy` from `failure_class` via the mapping in the pipeline-orchestration skill (Failure Classification & Retry Strategy); `failure_class: none` ⇒ `retry_strategy: none`. Every FAIL/WARN entry must carry a non-`none` `failure_class` and its mapped `retry_strategy`; the checkpoint-gate and (where present) constraint-validation history entries below also include `retry_strategy` (`none` for `await_approval`/checkpoint; `escalate` for constraint_gap). When escalating, `pending_approval.reason` must state the `failure_class` plus what the user must supply to unblock. The last entry written is the terminal entry read by downstream orchestrators.
 7. Checkpoint gate (at `dft_signoff` only): before setting `dft.signoff=true`, read `pipeline_config.checkpoints` and `approved_checkpoints` from `design_state.json`. If `"dft_signoff"` is in `checkpoints` and not in `approved_checkpoints[].stage`: (a) atomic RMW — set `pending_approval = { "type": "checkpoint", "stage": "dft_signoff", "agent": "dft-orchestrator", "reason": "checkpoint dft_signoff requires human approval before proceeding", "fix_request_id": null, "last_summary": "<QoR one-liner: SAF coverage, BIST pass status>", "requires_user": true }`, (b) append a `history[]` entry with `decision: "await_approval"`, `confidence: "high"`, `failure_class: "none"`, `suggested_next_step: "escalate"`, (c) print the gate message, (d) halt without setting `dft.signoff=true`. On re-invocation: if `"dft_signoff"` is now in `approved_checkpoints[].stage`, clear `pending_approval` (set null) and proceed.
 8. Constraint validation (at `dft_architecture`, skip in fix-request-servicing mode): read `design_state.constraints`. No required keys for this domain — all fault-coverage targets have schema defaults (`dft.*`). For absent keys, use schema defaults and include a fallback note in the stage `reason`. Tag `constraint_ref` in history entries when evaluating fault-coverage QoR (e.g. `"dft.saf_coverage_pct"`, `"dft.mbist_coverage_pct"`).
 
 ## Memory
 
+**Memory root (`<MEM>`).** Resolve the memory root once at session start, in priority
+order: (1) an explicit `--memory-root`, (2) the `$CHIP_DESIGN_MEMORY_ROOT` environment
+variable, (3) the central default
+`${XDG_DATA_HOME:-$HOME/.local/share}/chip-design-agents/digital/memory`, (4) the in-repo
+`memory/` seed as a last resort. Use the resolved absolute path as `<MEM>` for every memory
+read/write below — never the literal `memory/` directory. To print it, run the resolver:
+`python3 plugins/infrastructure/skills/memory-keeper/memory_root.py`. See the memory-keeper
+skill's "Memory Root Resolution" section.
+
+
 ### Read (session start)
-Before beginning `dft_architecture`, read `memory/dft/knowledge.md` if it exists.
+Before beginning `dft_architecture`, read `<MEM>/dft/knowledge.md` if it exists.
 Incorporate its guidance into stage decisions — especially known failure patterns,
 successful tool flags, and PDK-specific notes. If the file does not exist, proceed
 without it.
 
 ### Write (session end)
 After signoff (or on escalation/abandon), append one JSON line to
-`memory/dft/experiences.jsonl`:
+`<MEM>/dft/experiences.jsonl`:
 ```json
 {
   "timestamp": "<ISO-8601>",
@@ -109,7 +119,7 @@ Create the file and parent directories if they do not exist.
 `design_state.json` in the working directory is the shared cross-orchestrator state file.
 
 ### Read (session start)
-After reading `memory/dft/knowledge.md`, read `design_state.json` if it exists.
+After reading `<MEM>/dft/knowledge.md`, read `design_state.json` if it exists.
 Extract: `rtl`, `synthesis`, `constraints`, `pipeline_config`, `approved_checkpoints`.
 If the file does not exist or fields are null, proceed with empty upstream context.
 Do not fail if any key is absent — treat missing keys as null.

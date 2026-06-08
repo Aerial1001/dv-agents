@@ -115,6 +115,23 @@ def find_memory_root(script_path: Path) -> Path:
     )
 
 
+def resolve_memory_root(explicit: str | None) -> Path:
+    """Resolve the memory root via the shared single-source-of-truth resolver
+    (plugins/infrastructure/skills/memory-keeper/memory_root.py), so this reader
+    agrees with the orchestrator writers: --memory-root > $CHIP_DESIGN_MEMORY_ROOT
+    > central XDG default > in-repo seed. Falls back to walking up from this
+    script if the resolver module cannot be located."""
+    resolver = (Path(__file__).resolve().parents[1]
+                / "plugins/infrastructure/skills/memory-keeper/memory_root.py")
+    if resolver.is_file():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("memory_root", resolver)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.resolve_memory_root(explicit)
+    return Path(explicit) if explicit else find_memory_root(Path(__file__))
+
+
 def load_domain_records(memory_root: Path, domain: str) -> list[dict]:
     jsonl = memory_root / domain / "experiences.jsonl"
     if not jsonl.exists():
@@ -456,14 +473,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.memory_root:
-        memory_root = Path(args.memory_root)
-    else:
-        try:
-            memory_root = find_memory_root(Path(__file__))
-        except FileNotFoundError as exc:
-            print(f"[error] {exc}", file=sys.stderr)
-            sys.exit(2)
+    try:
+        memory_root = resolve_memory_root(args.memory_root)
+    except FileNotFoundError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        sys.exit(2)
 
     if not memory_root.is_dir():
         print(f"[error] memory root not found: {memory_root}", file=sys.stderr)
