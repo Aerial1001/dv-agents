@@ -81,22 +81,32 @@ Each stage must return:
 2. Update global_qor after every stage — track WNS/TNS/power/area/DRC through flow
 3. Never proceed past a FAIL without applying the loop-back rule
 4. Output: GDS-II, sign-off STA report, DRC clean, LVS clean, power report
-5. Read `memory/pd/knowledge.md` before the first stage. Write an experience record to `memory/pd/experiences.jsonl` whenever the flow terminates — including signoff, escalation, max-iterations exceeded, early error, or user interruption. If signoff was not achieved, set `signoff_achieved: false` and populate only the stages that completed.
+5. Read `<MEM>/pd/knowledge.md` before the first stage. Write an experience record to `<MEM>/pd/experiences.jsonl` whenever the flow terminates — including signoff, escalation, max-iterations exceeded, early error, or user interruption. If signoff was not achieved, set `signoff_achieved: false` and populate only the stages that completed.
 6. Per-stage trace: after each stage completes (PASS, FAIL, or WARN), atomically append one `history[]` entry to `design_state.json` using the stage's output `confidence`, `failure_class`, `retry_strategy`, and `suggested_next_step`. Use the 10-field schema shown in the Design State section below. Derive `retry_strategy` from `failure_class` via the mapping in the pipeline-orchestration skill (Failure Classification & Retry Strategy); `failure_class: none` ⇒ `retry_strategy: none`. Every FAIL/WARN entry must carry a non-`none` `failure_class` and its mapped `retry_strategy`; the checkpoint-gate and (where present) constraint-validation history entries below also include `retry_strategy` (`none` for `await_approval`/checkpoint; `escalate` for constraint_gap). When escalating, `pending_approval.reason` must state the `failure_class` plus what the user must supply to unblock. The last entry written is the terminal entry read by downstream orchestrators.
 7. Checkpoint gate (at `signoff` only): before setting `pd.signoff=true`, read `pipeline_config.checkpoints` and `approved_checkpoints` from `design_state.json`. If `"pd_signoff"` is in `checkpoints` and not in `approved_checkpoints[].stage`: (a) atomic RMW — set `pending_approval = { "type": "checkpoint", "stage": "pd_signoff", "agent": "physical-design-orchestrator", "reason": "checkpoint pd_signoff requires human approval before tape-out proceeds", "fix_request_id": null, "last_summary": "<QoR one-liner: WNS, DRC violations, util_pct>", "requires_user": true }`, (b) append a `history[]` entry with `decision: "await_approval"`, `confidence: "high"`, `failure_class: "none"`, `suggested_next_step: "escalate"`, (c) print the gate message, (d) halt without setting `pd.signoff=true`. On re-invocation: if `"pd_signoff"` is now in `approved_checkpoints[].stage`, clear `pending_approval` (set null) and proceed.
 8. Constraint validation (at `floorplan`, skip in fix-request-servicing mode): read `design_state.constraints`. Required: `clock.clk_mhz`, `area.area_um2`, `power.power_mw`; `pvt_corners` with at least one entry having non-null `voltage_v` and `temp_c`. For each missing required key, perform atomic RMW — set `pending_approval = { "type": "constraint_gap", "stage": "floorplan", "agent": "physical-design-orchestrator", "reason": "required constraint <key> missing from design_state.constraints", "fix_request_id": null, "last_summary": "<comma-separated missing keys>", "requires_user": true }`, append a `history[]` entry with `decision: "escalate"`, `failure_class: "spec_gap"`, `suggested_next_step: "escalate"`, `constraint_ref: "<missing key>"`, and halt. For optional absent constraints (utilization targets, IR drop, leakage, skew, fanout), use schema defaults and include a fallback note in the stage `reason`. Tag `constraint_ref` when evaluating PPA QoR (e.g. `"area.utilization_pct_max"`, `"power.ir_drop_pct_max"`).
 
 ## Memory
 
+**Memory root (`<MEM>`).** Resolve the memory root once at session start, in priority
+order: (1) an explicit `--memory-root`, (2) the `$CHIP_DESIGN_MEMORY_ROOT` environment
+variable, (3) the central default
+`${XDG_DATA_HOME:-$HOME/.local/share}/chip-design-agents/digital/memory`, (4) the in-repo
+`memory/` seed as a last resort. Use the resolved absolute path as `<MEM>` for every memory
+read/write below — never the literal `memory/` directory. To print it, run the resolver:
+`python3 plugins/infrastructure/skills/memory-keeper/memory_root.py`. See the memory-keeper
+skill's "Memory Root Resolution" section.
+
+
 ### Read (session start)
 Before beginning `floorplan`, read the following if they exist:
-- `memory/pd/knowledge.md` — known failure patterns, tool flags, PDK quirks.
+- `<MEM>/pd/knowledge.md` — known failure patterns, tool flags, PDK quirks.
   Incorporate into all stage decisions. If absent, proceed without it.
-- `memory/pd/run_state.md` — if present, a prior run was interrupted; use the
+- `<MEM>/pd/run_state.md` — if present, a prior run was interrupted; use the
   `run_id` and `last_stage` fields to resume correctly.
 
 ### Write: run state (first action, before any tool invocation)
-Write `memory/pd/run_state.md`:
+Write `<MEM>/pd/run_state.md`:
 ```markdown
 run_id:      pd_<YYYYMMDD>_<HHMMSS>
 design_name: <design>
@@ -110,7 +120,7 @@ identify the correct run directory without depending on in-memory state.
 
 ### Write: per-stage (after each stage)
 After every stage completes, upsert (create or replace by `run_id`) one JSON line in
-`memory/pd/experiences.jsonl` with the stages completed so far:
+`<MEM>/pd/experiences.jsonl` with the stages completed so far:
 ```json
 {
   "run_id": "<from state>",
@@ -147,7 +157,7 @@ to `experiences.jsonl`. Skip silently if the tool is absent — JSONL is the can
 `design_state.json` in the working directory is the shared cross-orchestrator state file.
 
 ### Read (session start)
-After reading `memory/pd/knowledge.md`, read `design_state.json` if it exists.
+After reading `<MEM>/pd/knowledge.md`, read `design_state.json` if it exists.
 Extract: `synthesis`, `sta`, `dft`, `constraints`, `pipeline_config`, `approved_checkpoints`.
 If the file does not exist or fields are null, proceed with empty upstream context.
 Do not fail if any key is absent — treat missing keys as null.

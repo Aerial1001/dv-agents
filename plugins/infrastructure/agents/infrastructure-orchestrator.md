@@ -114,7 +114,7 @@ Each stage must return:
 5. On completion: confirm `tool-manifest.json` written, all 8 wrappers executable, `mcp-adapter.py` and `mcp-session-adapter.py` present, and all 10 MCP config snippets written with resolved absolute paths and printed
 6. Per-stage trace: after each stage completes (PASS, FAIL, or WARN), atomically append one `history[]` entry to `design_state.json` using the stage's output `confidence`, `failure_class`, `retry_strategy`, and `suggested_next_step`. Use the 10-field schema shown in the Design State section below. Derive `retry_strategy` from `failure_class` via the mapping in the pipeline-orchestration skill (Failure Classification & Retry Strategy); `failure_class: none` ⇒ `retry_strategy: none`. Every FAIL/WARN entry must carry a non-`none` `failure_class` and its mapped `retry_strategy`; the checkpoint-gate history entry below also includes `retry_strategy` (`none` for `await_approval`/checkpoint). When escalating, `pending_approval.reason` must state the `failure_class` plus what the user must supply to unblock. The last entry written is the terminal entry read by downstream orchestrators.
 7. Checkpoint gate (at `environment_validation` only): before setting `environment.signoff=true`, read `pipeline_config.checkpoints` and `approved_checkpoints` from `design_state.json`. If `"environment_validation"` is in `checkpoints` and not in `approved_checkpoints[].stage`: (a) atomic RMW — set `pending_approval = { "type": "checkpoint", "stage": "environment_validation", "agent": "infrastructure-orchestrator", "reason": "checkpoint environment_validation requires human approval before proceeding", "fix_request_id": null, "last_summary": "<QoR one-liner: tools_detected, wrappers_deployed>", "requires_user": true }`, (b) append a `history[]` entry with `decision: "await_approval"`, `confidence: "high"`, `failure_class: "none"`, `suggested_next_step: "escalate"`, (c) print the gate message, (d) halt without setting `environment.signoff=true`. On re-invocation: if `"environment_validation"` is now in `approved_checkpoints[].stage`, clear `pending_approval` (set null) and proceed.
-8. Infrastructure memory (opt-in — default off): see the **Infrastructure Memory** section below. Persist tool versions and setup config to `memory/infrastructure/` **only** when `design_state.pipeline_config.track_infrastructure` is `true` or the orchestrator was invoked with `--track-memory`. When neither is set, skip all `memory/infrastructure/` reads and writes entirely — current behavior is unchanged.
+8. Infrastructure memory (opt-in — default off): see the **Infrastructure Memory** section below. Persist tool versions and setup config to `<MEM>/infrastructure/` **only** when `design_state.pipeline_config.track_infrastructure` is `true` or the orchestrator was invoked with `--track-memory`. When neither is set, skip all `<MEM>/infrastructure/` reads and writes entirely — current behavior is unchanged.
 
 ## Design State
 
@@ -165,7 +165,17 @@ History entry to append:
 
 ## Infrastructure Memory (opt-in)
 
-Persistent tool-version and setup-config tracking under `memory/infrastructure/`, following the
+**Memory root (`<MEM>`).** Resolve the memory root once at session start, in priority
+order: (1) an explicit `--memory-root`, (2) the `$CHIP_DESIGN_MEMORY_ROOT` environment
+variable, (3) the central default
+`${XDG_DATA_HOME:-$HOME/.local/share}/chip-design-agents/digital/memory`, (4) the in-repo
+`memory/` seed as a last resort. Use the resolved absolute path as `<MEM>` for every memory
+read/write below — never the literal `memory/` directory. To print it, run the resolver:
+`python3 plugins/infrastructure/skills/memory-keeper/memory_root.py`. See the memory-keeper
+skill's "Memory Root Resolution" section.
+
+
+Persistent tool-version and setup-config tracking under `<MEM>/infrastructure/`, following the
 two-tier memory pattern in `memory/README.md`. This is **disabled by default** — infrastructure
 state is environment-specific and lockfiles are the primary version source of truth. Enable it
 only when tool-version mismatches have caused repeated cross-session debugging.
@@ -175,16 +185,16 @@ Tracking is enabled when **either** is true:
 - `design_state.pipeline_config.track_infrastructure == true`, or
 - the orchestrator was invoked with the `--track-memory` flag.
 
-If neither is set, **skip this entire section** — perform no `memory/infrastructure/` reads or
+If neither is set, **skip this entire section** — perform no `<MEM>/infrastructure/` reads or
 writes. This preserves the default (memory-free) behavior exactly.
 
 ### Read (session start, if enabled)
-Read `memory/infrastructure/knowledge.md` for known setup quirks and version-mismatch patterns;
+Read `<MEM>/infrastructure/knowledge.md` for known setup quirks and version-mismatch patterns;
 prefer entries whose environment fingerprint matches the current host. Read
-`memory/infrastructure/run_state.md` if resuming an interrupted setup.
+`<MEM>/infrastructure/run_state.md` if resuming an interrupted setup.
 
 ### Write (after `environment_validation`, if enabled)
-Upsert one record (create-or-replace by `run_id`) into `memory/infrastructure/experiences.jsonl`
+Upsert one record (create-or-replace by `run_id`) into `<MEM>/infrastructure/experiences.jsonl`
 using the atomic read-modify-write protocol in `memory/README.md`. Records are
 **environment-keyed** so cross-machine data never collides. `design_name` is typically `null`
 (infrastructure is design-independent). Populate `key_metrics.tool_versions` from the `FOUND`

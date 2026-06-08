@@ -88,7 +88,7 @@ Each stage must return:
 2. Enforce loop-back rules strictly — do not proceed past a FAIL
 3. If max iterations exceeded: stop, present full state and escalation report
 4. On completion: produce microarchitecture document and RTL handoff package
-5. Read `memory/architecture/knowledge.md` before the first stage. Write an experience record to `memory/architecture/experiences.jsonl` whenever the flow terminates — including signoff, escalation, max-iterations exceeded, early error, or user interruption. If signoff was not achieved, set `signoff_achieved: false` and populate only the stages that completed.
+5. Read `<MEM>/architecture/knowledge.md` before the first stage. Write an experience record to `<MEM>/architecture/experiences.jsonl` whenever the flow terminates — including signoff, escalation, max-iterations exceeded, early error, or user interruption. If signoff was not achieved, set `signoff_achieved: false` and populate only the stages that completed.
 6. Per-stage trace: after each stage completes (PASS, FAIL, or WARN), atomically append one `history[]` entry to `design_state.json` using the stage's output `confidence`, `failure_class`, `retry_strategy`, and `suggested_next_step`. Use the 10-field schema shown in the Design State section below. Derive `retry_strategy` from `failure_class` via the mapping in the pipeline-orchestration skill (Failure Classification & Retry Strategy); `failure_class: none` ⇒ `retry_strategy: none`. Every FAIL/WARN entry must carry a non-`none` `failure_class` and its mapped `retry_strategy`; the checkpoint-gate and (where present) constraint-validation history entries below also include `retry_strategy` (`none` for `await_approval`/checkpoint; `escalate` for constraint_gap). When escalating, `pending_approval.reason` must state the `failure_class` plus what the user must supply to unblock. The last entry written is the terminal entry read by downstream orchestrators.
 7. Checkpoint gate (at `arch_signoff` only, unless invoked in fix-request-servicing mode — i.e. a `fix_request.id` was passed in the prompt): before setting `architecture.signoff=true`, read `pipeline_config.checkpoints` and `approved_checkpoints` from `design_state.json`. If `"arch_signoff"` is in `checkpoints` and not in `approved_checkpoints[].stage`: (a) atomic RMW — set `pending_approval = { "type": "checkpoint", "stage": "arch_signoff", "agent": "architecture-orchestrator", "reason": "checkpoint arch_signoff requires human approval before proceeding", "fix_request_id": null, "last_summary": "<QoR one-liner: selected arch, estimated MHz, area>", "requires_user": true }`, (b) append a `history[]` entry with `decision: "await_approval"`, `confidence: "high"`, `failure_class: "none"`, `suggested_next_step: "escalate"`, (c) print the gate message, (d) halt without setting `architecture.signoff=true`. On re-invocation: if `"arch_signoff"` is now in `approved_checkpoints[].stage`, clear `pending_approval` (set null) and proceed.
 8. Constraint extraction (at `spec_analysis`, unless invoked in fix-request-servicing mode): parse the product specification for target clock frequency, area budget, and power budget. Populate `constraints.clock.clk_mhz`, `constraints.area.area_um2`, and `constraints.power.power_mw` from spec values where derivable; leave as `null` when not specified. Write the full constraints object (see Design State section) to `design_state.json` as part of the `spec_analysis` stage write — do not wait for the session-end atomic RMW. This ensures downstream orchestrators can read constraints as soon as architecture completes.
@@ -96,15 +96,25 @@ Each stage must return:
 
 ## Memory
 
+**Memory root (`<MEM>`).** Resolve the memory root once at session start, in priority
+order: (1) an explicit `--memory-root`, (2) the `$CHIP_DESIGN_MEMORY_ROOT` environment
+variable, (3) the central default
+`${XDG_DATA_HOME:-$HOME/.local/share}/chip-design-agents/digital/memory`, (4) the in-repo
+`memory/` seed as a last resort. Use the resolved absolute path as `<MEM>` for every memory
+read/write below — never the literal `memory/` directory. To print it, run the resolver:
+`python3 plugins/infrastructure/skills/memory-keeper/memory_root.py`. See the memory-keeper
+skill's "Memory Root Resolution" section.
+
+
 ### Read (session start)
-Before beginning `spec_analysis`, read `memory/architecture/knowledge.md` if it exists.
+Before beginning `spec_analysis`, read `<MEM>/architecture/knowledge.md` if it exists.
 Incorporate its guidance into stage decisions — especially known failure patterns,
 successful tool flags, and PDK-specific notes. If the file does not exist, proceed
 without it.
 
 ### Write (session end)
 On any termination path (signoff, escalation, abandonment, interruption, error, or max-turns
-reached), upsert one JSON record in `memory/architecture/experiences.jsonl`. Implement the
+reached), upsert one JSON record in `<MEM>/architecture/experiences.jsonl`. Implement the
 upsert by reading the file as newline-delimited JSON objects, filtering out any existing line
 where `run_id` matches the incoming value, appending the new record as a single JSON line, and
 atomically replacing the file (write to a temp file, then rename) to avoid partial writes. Each
@@ -138,7 +148,7 @@ on successful signoff. Create the file and parent directories if they do not exi
 `design_state.json` in the working directory is the shared cross-orchestrator state file.
 
 ### Read (session start)
-After reading `memory/architecture/knowledge.md`, read `design_state.json` if it exists.
+After reading `<MEM>/architecture/knowledge.md`, read `design_state.json` if it exists.
 Extract: `spec`, `constraints`, `pipeline_config`, `approved_checkpoints`.
 If the file does not exist or fields are null, proceed with empty upstream context.
 Do not fail if any key is absent — treat missing keys as null.

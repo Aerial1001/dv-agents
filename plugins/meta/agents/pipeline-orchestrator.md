@@ -121,17 +121,27 @@ Each stage must return:
 4. Never modify `fix_requests[]` fields owned by the producer (verification-orchestrator, formal-orchestrator) or consumer (rtl-design-orchestrator) agents. Only set `cross_domain_iteration_count`, `pipeline_session_id`, `pipeline_config`, `pending_approval`, archive resolved entries in `archive_fix_requests[]`, and append to `history[]`.
 5. Do not invoke this orchestrator in parallel with itself. If you detect an in-flight `claimed` entry with a recent `updated_at`, exit and tell the user to wait.
 6. Spawning is strictly sequential: RTL run must complete before re-verify is spawned.
-7. Read `memory/meta/knowledge.md` before the first stage. Write an experience record to `memory/meta/experiences.jsonl` on every termination path.
+7. Read `<MEM>/meta/knowledge.md` before the first stage. Write an experience record to `<MEM>/meta/experiences.jsonl` on every termination path.
 
 ## Memory
 
+**Memory root (`<MEM>`).** Resolve the memory root once at session start, in priority
+order: (1) an explicit `--memory-root`, (2) the `$CHIP_DESIGN_MEMORY_ROOT` environment
+variable, (3) the central default
+`${XDG_DATA_HOME:-$HOME/.local/share}/chip-design-agents/digital/memory`, (4) the in-repo
+`memory/` seed as a last resort. Use the resolved absolute path as `<MEM>` for every memory
+read/write below — never the literal `memory/` directory. To print it, run the resolver:
+`python3 plugins/infrastructure/skills/memory-keeper/memory_root.py`. See the memory-keeper
+skill's "Memory Root Resolution" section.
+
+
 ### Read (session start)
-Before beginning `detect_open_fix_requests`, read `memory/meta/knowledge.md` if it exists.
+Before beginning `detect_open_fix_requests`, read `<MEM>/meta/knowledge.md` if it exists.
 Use it for iteration-cap heuristics and escalation-message templates.
 If the file does not exist, proceed without it.
 
 ### Write (session end)
-Upsert one JSON line in `memory/meta/experiences.jsonl`:
+Upsert one JSON line in `<MEM>/meta/experiences.jsonl`:
 ```json
 {
   "run_id": "<ISO timestamp + design_name hash>",
