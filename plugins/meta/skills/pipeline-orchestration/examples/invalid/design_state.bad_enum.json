@@ -1,0 +1,47 @@
+{
+  "_comment": "NEGATIVE fixture — intentionally invalid. The schema MUST reject it. Two seeded faults: (1) history[0].retry_strategy 'regenerate' violates the timing->refine map; (2) fix_requests[0].status 'in_progress' is not an allowed status enum.",
+  "format_version": "1.5",
+  "design_name": "invalid_example",
+  "pipeline_config": { "max_cross_domain_iterations": 3 },
+  "fix_requests": [
+    {
+      "id": "fr_bad_001",
+      "created_at": "2026-03-10T09:30:00Z",
+      "updated_at": "2026-03-10T11:00:00Z",
+      "created_by": "verification-orchestrator",
+      "failure_class": "functional",
+      "retry_strategy": "refine",
+      "test_name": "test_mac_overflow",
+      "property_or_assertion": null,
+      "seed": 42,
+      "waveform_path": "sim/waves/test_mac_overflow_42.vcd",
+      "log_path": "sim/logs/test_mac_overflow_42.log",
+      "suspected_rtl": {
+        "module": "mac_unit",
+        "signal": "acc_reg",
+        "file": "rtl/mac_unit.sv",
+        "line_range": [45, 52]
+      },
+      "summary": "Accumulator overflows silently",
+      "expected_behavior": "Saturate at MAX_VAL on overflow",
+      "observed_behavior": "acc_reg wraps to 0",
+      "session_id": "ps_bad",
+      "status": "in_progress",
+      "rtl_response": null,
+      "history": []
+    }
+  ],
+  "history": [
+    {
+      "timestamp": "2026-03-10T09:30:00Z",
+      "agent": "rtl-design-orchestrator",
+      "stage": "synth_check",
+      "decision": "proceed",
+      "confidence": "high",
+      "failure_class": "timing",
+      "retry_strategy": "regenerate",
+      "suggested_next_step": "loop_back_to:rtl_coding",
+      "reason": "seeded fault: retry_strategy should be 'refine' for timing"
+    }
+  ]
+}
