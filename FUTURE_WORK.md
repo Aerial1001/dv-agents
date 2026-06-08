@@ -326,3 +326,44 @@ outweighs benefit at current agent count.
 
 **Prerequisite for all splits:** item 5 (central design state) must be implemented first
 so sub-agents can share artefacts without dropping data at boundaries.
+
+## 14. Multi-Servicer Fix Dispatch (`route_to`)
+
+The pipeline-orchestrator's `dispatch_to_producer` currently always spawns a single
+producer — the RTL orchestrator (`plugins/meta/agents/pipeline-orchestrator.md`,
+`dispatch_to_producer` step). This is correct today because RTL is the only
+fix-servicer domain: every open `fix_request` is a DUT/formal bug routed back to RTL,
+and re-validation is already routed to the originator via `fix_request.created_by`
+(`verification-orchestrator` | `formal-orchestrator`).
+
+A machine-readable `route_to` field is **already reserved** in the schema as an optional,
+forward-compatible hint (default servicer `rtl-design`) — see
+`docs/design_state.schema.json` (`$defs.fixRequest.route_to`) and
+`plugins/meta/skills/pipeline-orchestration/SKILL.md` § fix_request Schema. The field is
+documented but **not yet consumed** by any dispatch logic, so no schema migration is
+required when this lands.
+
+The sibling `analog-chip-design-agents` repo already implements the full pattern: its
+pipeline-orchestrator reads `route_to` and dispatches an open fix to one of several
+servicer domains (`circuit-design` | `behavioral-modeling` | `custom-layout` |
+`em-modeling`), then re-validates via the `created_by` originator. That implementation is
+the reference template for digital.
+
+**When to implement:** once digital gains additional fix-servicer domains — i.e. domains
+that can *resolve* a fix rather than only *detect* one. Plausible producers beyond RTL
+include synthesis (constraint/UPF fixes), PD (DRC/LVS/floorplan fixes), or the new
+domains in item 12. Until then, multi-target dispatch would be scaffolding with no
+targets to route to.
+
+**Work when it lands:**
+- Teach `dispatch_to_producer` to read `fix_request.route_to` and spawn the named servicer
+  orchestrator (default `rtl-design` when absent), mirroring analog's routing table.
+- Constrain `route_to` to an enum in `docs/design_state.schema.json` once the servicer set
+  is fixed (it is an unconstrained optional string today).
+- Have detectors (`verification`/`formal`/future producers) set `route_to` when the fix
+  belongs to a non-RTL domain; default-absent continues to mean RTL.
+- Add positive/negative fixtures exercising each `route_to` target and extend
+  `validate.yml`'s schema check accordingly.
+
+**Prerequisite:** item 12 and/or item 13 (additional fix-servicer domains must exist);
+item 5 (central design state) for the cross-domain handoff.
