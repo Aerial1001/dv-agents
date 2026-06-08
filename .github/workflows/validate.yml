@@ -286,3 +286,26 @@ jobs:
               sys.exit(1)
           print("Infrastructure memory integration OK")
           PYEOF
+
+  tests:
+    name: Python tool tests (pytest)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # This job executes repo code (the tool scripts under test), so don't
+          # leave the token in git config.
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: pip install --quiet "pytest==8.3.4"
+
+      - name: Run pytest
+        run: python3 -m pytest tests/ -q
