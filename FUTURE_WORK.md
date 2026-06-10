@@ -77,7 +77,7 @@ infrastructure-orchestrator § "Infrastructure Memory" for full details.
 
 ## 5. Central "Design" State ✓ IMPLEMENTED
 
-**Status:** Shipped — all 14 orchestrators read `design_state.json` on entry and write their
+**Status:** Shipped — all 15 orchestrators read `design_state.json` on entry and write their
 domain sub-object plus a `history[]` entry on exit. Schema covers `spec`, `interfaces`,
 `constraints`, `architecture`, `rtl`, `verification_status`, `synthesis`, `dft`, `sta`,
 `hls`, `pd`, `soc`, `compiler`, `firmware`, `fpga`, `environment`, `tool_feedback`,
