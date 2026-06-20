@@ -105,6 +105,9 @@ Before beginning `floorplan`, read the following if they exist:
 - `<MEM>/pd/run_state.md` — if present, a prior run was interrupted; use the
   `run_id` and `last_stage` fields to resume correctly.
 
+
+**Optional — semantic experience lookup.** If the `query_experiences` MCP tool (from the `chip-design-memory` server) is available, before the first stage call it with `domain="pd"`, the current goal or failing-stage issue as `query`, and any known `filters` (`pdk`, `tool_used`, `design_name`). Use the ranked prior fixes to inform stage decisions; the result's `backend`/`fell_back` flags indicate whether ranking was semantic or keyword. If the tool is unavailable, proceed with `knowledge.md` only — this augments, never replaces, the `knowledge.md` read.
+
 ### Write: run state (first action, before any tool invocation)
 Write `<MEM>/pd/run_state.md`:
 ```markdown

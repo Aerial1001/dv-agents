@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased] — feat/semantic-experience-search branch
+
+### Added
+
+- **Semantic / keyword search over experiences** (FUTURE_WORK item 2): a new way for orchestrators to retrieve prior fixes by relevance to a natural-language query (e.g. "what fixed WNS issues on sky130 before?") instead of reading the whole `experiences.jsonl`.
+  - **`tools/experience_search.py`** — core library + standalone CLI. Default backend is a pure-stdlib **TF-IDF + cosine** ranker over the free-text fields (`issues_encountered`, `fixes_applied`, `notes`); reuses the shared `resolve_memory_root`, `load_records`, and `filter_by_design/pdk/tool` helpers so it sees exactly what orchestrators wrote. Returns ranked records with `score`, `matched_terms`, the `backend` used, and a `fell_back`/`fallback_reason` flag. CLI exit codes mirror the repo convention (`0` results, `1` no match, `2` error/bad memory root).
+  - **Optional embedding backend, dormant by default** — `get_embedding_backend()` returns `None` until a deployment wires in an embedding library, keeping the repo stdlib-only. It activates only when a backend is available **and** the domain has ≥ `--min-records` records (default **50**, per the issue threshold); otherwise the tool transparently falls back to keyword. Embeddings cache in a stdlib `sqlite3` index (`<domain>/.experience_index.sqlite3`) keyed by record content hash, with incremental `--reindex`.
+  - **`plugins/infrastructure/tools/mcp-memory.py`** — dedicated MCP stdio server (protocol `2024-11-05`, same scaffolding as `mcp-adapter.py`) exposing the `query_experiences` tool; **`plugins/infrastructure/mcp/mcp-memory.json`** — config template (server name `chip-design-memory`).
+  - **Tests** — `tests/test_experience_search.py` (tokenizer, TF-IDF ranking, filter pre-narrowing, threshold/backend selection, sqlite cache incrementality + stale-hash eviction, CLI exit codes) and `tests/test_mcp_memory.py` (JSON-RPC `initialize`/`tools/list`/`tools/call` smoke + error codes).
+
+### Changed
+
+- **All 15 orchestrators**: added an optional "semantic experience lookup" note to the session-start memory block — call the `query_experiences` MCP tool when available, otherwise proceed with `knowledge.md` only (augments, never replaces). The note is tailored for the router (`pipeline-orchestrator`, queries the target producer domain) and the opt-in `infrastructure-orchestrator`.
+- **`memory/README.md`**: new "Semantic / Keyword Experience Search" section documenting the CLI, the MCP server/config, the threshold/fallback semantics, the sqlite cache + `--reindex`, and the optional orchestrator read-path.
+- **`FUTURE_WORK.md`**: item 2 marked implemented (phased); documented why the sqlite-vec/Chroma/hosted options were rejected in favor of a stdlib-only keyword default with a pluggable embedding hook.
+
 ## [Unreleased] — feat/agent-auto-detect branch
 
 ### Added

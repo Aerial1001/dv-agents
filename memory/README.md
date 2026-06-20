@@ -212,3 +212,58 @@ python3 tools/qor_trends.py --design aes_core --pdk sky130 --group-by tool --plo
 
 Regression alerts fire automatically when a metric moves in the wrong direction between
 runs (e.g. WNS degrades, coverage drops).
+
+## Semantic / Keyword Experience Search
+
+`tools/experience_search.py` ranks past experience records by relevance to a
+natural-language query (e.g. *"what fixed WNS issues on sky130 before?"*) so an
+orchestrator can retrieve prior fixes by similarity instead of reading the whole
+JSONL file. It reuses the shared memory-root resolver and the same `load_records`
+/ filter helpers as the other tools, so it sees exactly what the orchestrators
+wrote.
+
+Two backends share one stable contract:
+
+- **keyword** (default, always available) — a pure-stdlib TF-IDF + cosine ranker
+  over the free-text fields (`issues_encountered`, `fixes_applied`, `notes`).
+  Adds value at any dataset size; needs no index or external dependency.
+- **embedding** (optional, dormant) — a pluggable semantic backend that activates
+  only when (a) an embedding library is wired in via `get_embedding_backend()`
+  **and** (b) the domain has at least `--min-records` records (default **50**,
+  per the issue #28 threshold). Vectors are cached in a stdlib `sqlite3` index
+  (`<domain>/.experience_index.sqlite3`) keyed by a content hash, so re-embedding
+  is incremental. Below the threshold (or with no backend), the tool transparently
+  **falls back to keyword** and flags `"backend": "keyword"`, `"fell_back": true`.
+
+```bash
+# Keyword search (works today, any dataset size)
+python3 tools/experience_search.py --domain synthesis \
+  --query "what fixed WNS on sky130" --pdk sky130
+
+# Machine-readable JSON (the MCP server uses this shape)
+python3 tools/experience_search.py --domain synthesis \
+  --query "wns closure" --json
+
+# Warm/refresh the embedding cache once enough records accumulate (no-op
+# until an embedding backend is wired in)
+python3 tools/experience_search.py --domain synthesis --reindex
+```
+
+### MCP memory server
+
+`plugins/infrastructure/tools/mcp-memory.py` exposes the same search as an MCP
+stdio tool, `query_experiences`, following the protocol of the EDA tool adapters
+(MCP `2024-11-05`). Register it from the template at
+`plugins/infrastructure/mcp/mcp-memory.json` (server name `chip-design-memory`)
+by pasting the `mcpServers` block into your `.claude/settings.json` and replacing
+the placeholder repo path.
+
+### Optional orchestrator read-path
+
+When the `query_experiences` MCP tool is available, orchestrators may call it at
+session start — with this `domain`, the current goal/issue as `query`, and known
+`filters` (`pdk`, `tool_used`, `design_name`) — to surface ranked prior fixes.
+This **augments, never replaces**, the `knowledge.md` read: if the tool is
+absent, orchestrators proceed with `knowledge.md` exactly as before (the same
+skip-silently pattern as the optional claude-mem index above). All 15
+orchestrators carry this optional note in their session-start memory block.
