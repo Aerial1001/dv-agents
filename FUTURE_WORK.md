@@ -16,18 +16,37 @@ into an updated `memory/<domain>/knowledge.md` summary. Implementation includes:
 - Invocable via `/chip-design-infrastructure:memory-keeper --domain <name>` or `--all`
 - Threshold guard: skips domains with fewer than N records (default: 5)
 
-## 2. Semantic Search Over Experiences
+## 2. Semantic Search Over Experiences ✓ IMPLEMENTED (phased)
 
-An MCP memory server that embeds experience records and allows orchestrators to query by similarity
+**Status:** Shipped (phased) — `tools/experience_search.py`,
+`plugins/infrastructure/tools/mcp-memory.py`, and
+`plugins/infrastructure/mcp/mcp-memory.json`.
+
+An MCP memory server (`chip-design-memory`, tool `query_experiences`) that lets
+orchestrators query experience records by similarity
 (e.g., "what fixed WNS issues on sky130 before?") rather than full-file read.
 
-**Prerequisite**: Experience log must be large enough to justify the infrastructure overhead —
-target threshold is ~50 records per domain before semantic search adds value over keyword grep.
+Built **fallback-first** to respect both the deferral (the experience log must be
+large enough to justify embeddings — target ~50 records/domain) and the repo's
+zero-dependency, stdlib-only convention:
 
-Implementation options:
-- SQLite + sqlite-vec extension (zero-dependency, file-based)
-- Chroma or Qdrant (local Docker container)
-- Hosted: Pinecone, Weaviate Cloud
+- **Default keyword backend** — pure-stdlib TF-IDF + cosine over the free-text
+  fields. Adds value at any dataset size; no index or dependency required.
+- **Optional embedding backend** — wired in but dormant; activates only when an
+  embedding library is supplied via `get_embedding_backend()` **and** the domain
+  has ≥ `--min-records` records (default 50). Vectors cache in a stdlib `sqlite3`
+  index keyed by record content hash (incremental re-embedding via `--reindex`).
+  Below the threshold or with no backend, it transparently falls back to keyword
+  and flags `fell_back: true`.
+- All 15 orchestrators carry an optional session-start read-path note that calls
+  the MCP tool when available and otherwise proceeds with `knowledge.md`.
+
+The original options below were **rejected** to preserve the zero-dependency
+convention (no new deps, no native extensions, no external service); a deployment
+that wants true semantic ranking only needs to implement `get_embedding_backend`:
+- ~~SQLite + sqlite-vec extension~~ (sqlite-vec is a native extension, not stdlib)
+- ~~Chroma or Qdrant (local Docker container)~~
+- ~~Hosted: Pinecone, Weaviate Cloud~~
 
 ## 3. Cross-Design Metric Trending ✓ IMPLEMENTED
 

@@ -193,6 +193,9 @@ Read `<MEM>/infrastructure/knowledge.md` for known setup quirks and version-mism
 prefer entries whose environment fingerprint matches the current host. Read
 `<MEM>/infrastructure/run_state.md` if resuming an interrupted setup.
 
+
+**Optional — semantic experience lookup.** When infrastructure memory is enabled and the `query_experiences` MCP tool (from the `chip-design-memory` server) is available, call it with `domain="infrastructure"` and the current setup issue as `query` to retrieve prior tool/version fixes; prefer results whose environment matches the current host. If the tool is unavailable, proceed with `knowledge.md` only — this augments, never replaces, it.
+
 ### Write (after `environment_validation`, if enabled)
 Upsert one record (create-or-replace by `run_id`) into `<MEM>/infrastructure/experiences.jsonl`
 using the atomic read-modify-write protocol in `memory/README.md`. Records are

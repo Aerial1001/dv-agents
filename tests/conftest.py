@@ -35,6 +35,12 @@ def distill():
     return _load("distill", "plugins/infrastructure/skills/memory-keeper/distill.py")
 
 
+@pytest.fixture
+def experience_search():
+    # Function-scoped so tests may monkeypatch get_embedding_backend in isolation.
+    return _load("experience_search", "tools/experience_search.py")
+
+
 @pytest.fixture(scope="session")
 def fixtures_dir() -> Path:
     return FIXTURES
