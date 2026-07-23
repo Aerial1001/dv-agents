@@ -16,7 +16,7 @@ allowed-tools: Read, Write, Bash
 ## Invocation
 
 - **If invoked by a user** presenting a setup task: immediately spawn the
-  `digital-chip-design-agents:infrastructure-orchestrator` agent and pass the full
+  `dv-agents:infrastructure-orchestrator` agent and pass the full
   user request and any available context. Do not execute stages directly.
 - **If invoked by the `infrastructure-orchestrator` mid-flow**: do not spawn a new
   agent. Treat this file as read-only — return the requested stage rules,
@@ -41,33 +41,15 @@ complete environment before any domain orchestrator begins work.
 - **Surelog** (`surelog`) — SystemVerilog pre-processor and parser
 - **sv2v** (`sv2v`) — SystemVerilog to Verilog converter
 - **Icarus Verilog** (`iverilog`) — Verilog simulator
-- **Yosys** (`yosys`) — open synthesis framework
-- **ABC** (`abc`) — logic synthesis and verification tool
-- **OpenROAD** (`openroad`) — RTL-to-GDS flow
-- **LibreLane / OpenLane2** (`openlane`) — open-source ASIC flow
-- **KLayout** (`klayout`) — GDS/OASIS viewer and DRC engine
-- **OpenSTA** (`sta`) — gate-level static timing analysis
-- **SymbiYosys** (`sby`) — formal hardware verification
-- **gem5** (`gem5`) — full-system micro-architectural simulator
-- **Bambu HLS** (`bambu-hls`) — high-level synthesis from C/C++
-- **nextpnr** (`nextpnr`) — FPGA place-and-route
-- **openFPGALoader** (`openFPGALoader`) — FPGA programming tool
 - **cocotb** (Python package `cocotb`) — Python-based RTL co-simulation
-- **LLVM** (`llvm-config`) — compiler infrastructure
-- **GCC** (`gcc`) — GNU compiler collection
-- **OpenOCD** (`openocd`) — on-chip debugger
-- **xschem** (`xschem`) — schematic capture and simulation netlist tool
 - **GTKWave** (`gtkwave`) — waveform viewer for VCD/FST simulation output
+- **FuseSoC** (`fusesoc`) — package manager and build system for HDL code
 - **uv** (`uv`) — fast Python package and project manager (required for cocotb installs)
 
 ### Proprietary (detect only — never install)
 - **Synopsys VCS** (`vcs`) — industry-standard RTL simulator
 - **Cadence Xcelium** (`xrun`, alt: `xmsim`) — next-generation simulation platform
-- **Synopsys Design Compiler** (`dc_shell`, alt: `dc_shell-t`) — logic synthesis
-- **Cadence Innovus** (`innovus`) — physical implementation
 - **Mentor QuestaSim** (`vsim`, alt: `questa`, `questasim`) — advanced simulation and verification
-- **Synopsys PrimeTime** (`pt_shell`, alt: `pt_shell64`) — sign-off static timing analysis
-- **Synopsys Formality** (`formality`, alt: `fm_shell`) — formal equivalence checking
 
 ---
 
@@ -80,27 +62,9 @@ and returns it.
 
 | MCP config | Tool | Typical duration |
 |------------|------|-----------------|
-| `mcp-yosys.json` | Yosys synthesis | seconds–minutes |
-| `mcp-openroad.json` | Single OpenROAD stage | minutes |
-| `mcp-opensta.json` | OpenSTA batch report | seconds–minutes |
-| `mcp-klayout.json` | KLayout DRC/LVS | minutes |
 | `mcp-verilator.json` | Verilator lint or sim | seconds–minutes |
-| `mcp-bambu.json` | Bambu HLS synthesis | minutes |
-| `mcp-gem5.json` | gem5 short benchmark run | minutes (set TOOL_TIMEOUT_S) |
-| `mcp-symbiflow.json` | SymbiYosys bounded proof | minutes–hours (set TOOL_TIMEOUT_S) |
 
 The adapter is `plugins/infrastructure/tools/mcp-adapter.py`.
-
-### Tier 2: Interactive session MCP servers (stateful, query-based)
-Use these when an agent iterates many times over an already-loaded design (e.g. ECO timing
-loops).  The process stays alive between calls — no re-loading per query.
-
-| MCP config | Tool | Exposed tools |
-|------------|------|---------------|
-| `mcp-openroad-session.json` | OpenROAD Tcl session | `load_design`, `query_timing`, `query_drc`, `get_design_area`, `get_power`, `run_tcl`, `close_design` |
-| `mcp-opensta-session.json` | OpenSTA Tcl session | `load_design`, `report_timing`, `report_slack_histogram`, `check_timing`, `run_tcl`, `close_design` |
-
-The adapter is `plugins/infrastructure/tools/mcp-session-adapter.py`.
 
 ### Full-flow tools — do NOT use MCP
 These tools run for 30 min–2+ hours and produce structured output files on disk.
@@ -108,9 +72,7 @@ Agents must launch them via Bash and read the output files directly.
 
 | Tool | Launch command | Read these files |
 |------|---------------|-----------------|
-| LibreLane / OpenLane 2 | `openlane config.json` | `runs/<design>/<tag>/metrics.json` |
-| ORFS / OpenROAD Flow Scripts | `make DESIGN_CONFIG=... finish` | `reports/<platform>/<design>/metrics.json` |
-| gem5 full-system simulation | `gem5 config.py ...` | `m5out/stats.txt`, `m5out/simout` |
+| Verilator simulation (large) | `verilator --binary ...` | `obj_dir/` output files |
 
 ### Execution Hierarchy (per domain agent)
 1. **Tier 2 session MCP** — if the tool supports a session and the design is already loaded

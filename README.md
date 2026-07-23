@@ -1,9 +1,9 @@
-# digital-chip-design-agents
+# dv-agents
 
-> Claude Code marketplace plugin — full digital chip design pipeline.  
-> 15 plugins · 16 skill files · 13 chip-design domains + infrastructure + pipeline orchestrator · closed-loop verification↔RTL feedback.
+> Claude Code marketplace plugin — DV verification pipeline.  
+> 4 plugins · 5 skill files · functional verification + SoC integration + EDA infrastructure · fix_request protocol for RTL designer handoff.
 
-[![Validate](https://github.com/chuanseng-ng/digital-chip-design-agents/actions/workflows/validate.yml/badge.svg)](https://github.com/chuanseng-ng/digital-chip-design-agents/actions/workflows/validate.yml)
+Forked from [digital-chip-design-agents](https://github.com/chuanseng-ng/digital-chip-design-agents) v1.3.0 — focused exclusively on design verification.
 
 ---
 
@@ -12,15 +12,16 @@
 With Node.js (≥18), install everything with one command — no clone, no Python:
 
 ```bash
-npx digital-chip-design-agents      # detects your AI agents and installs after a confirm
+npx dv-agents      # detects your AI agents and installs after a confirm
 ```
 
-Then just describe your task in natural language:
+Then just describe your verification task in natural language:
 
 ```
-Run the RTL design flow for my AXI DMA controller block
-Analyse timing violations on this routed DEF and suggest ECOs
-Build a UVM testbench for my FIFO block
+Build a UVM testbench for my FIFO block with full coverage
+Run regression on my AXI DMA controller and report coverage gaps
+Set up Verilator + cocotb for my RTL design
+Integrate these IP blocks into a SoC and run chip-level simulation
 ```
 
 Claude automatically loads the correct skill before executing.
@@ -35,27 +36,16 @@ For the install script, selective marketplace install, other AI assistants
 
 | Plugin Name | Domain | Invoke When You Want To... |
 |-------------|--------|---------------------------|
-| `chip-design-architecture` | Architecture Evaluation | Explore microarch candidates, estimate PPA, assess risk |
-| `chip-design-rtl` | RTL Design (SystemVerilog) | Write, lint, CDC-check, or synthesis-check RTL |
-| `chip-design-verification` | Functional Verification (UVM) | Build testbench, write tests, close coverage, run regression |
-| `chip-design-formal` | Formal Verification (FPV/LEC) | Prove properties, check equivalence, close formal gaps |
-| `chip-design-synthesis` | Logic Synthesis | Set up SDC, run synthesis, verify netlist with LEC |
-| `chip-design-dft` | Design for Test | Plan DFT, insert scan, run ATPG, set up JTAG |
-| `chip-design-sta` | Static Timing Analysis | Analyse timing, guide ECO closure, sign off timing |
-| `chip-design-hls` | High-Level Synthesis | Convert C/C++ to RTL, optimise directives, co-simulate |
-| `chip-design-pd` | Physical Design | Full PD flow: floorplan → placement → CTS → routing → sign-off |
-| `chip-design-soc` | SoC IP Integration | Qualify IPs, configure bus fabric, run chip-level sim |
-| `chip-design-compiler` | Compiler Toolchain | Build LLVM/GCC backend, assembler, linker, runtime for custom ISA |
-| `chip-design-firmware` | Embedded Firmware | BSP, HAL drivers, RTOS integration, firmware validation |
-| `chip-design-fpga` | FPGA Emulation | Port ASIC to FPGA, bring up hardware, validate SW on prototype |
+| `chip-design-verification` | Functional Verification (UVM) | Build testbench, write tests, close coverage, run regression, report bugs via fix_request |
+| `chip-design-soc` | SoC IP Integration | Qualify IPs, configure bus fabric, run chip-level simulation |
 | `chip-design-infrastructure` | Infrastructure & Memory | Detect EDA tools, deploy wrappers, configure MCP servers, distil domain memory |
-| `chip-design-meta` | Pipeline Orchestration | Drive closed-loop verification↔RTL feedback, manage fix_requests, enforce iteration cap |
+| `chip-design-meta` | Schema Reference | fix_request protocol, failure classification, retry strategy mapping, constraint definitions — **no agent included** |
 
 ---
 
 ## How It Works
 
-Each plugin installs two things:
+Each plugin installs:
 
 1. **A Skill** (`plugins/<domain>/skills/<domain>/SKILL.md`) — domain knowledge Claude reads
    before executing. Contains stage-by-stage rules, QoR metrics, common fixes, and output
@@ -64,43 +54,57 @@ Each plugin installs two things:
 2. **An Orchestrator Agent** (`plugins/<domain>/agents/<domain>-orchestrator.md`) — a subagent
    that manages the full multi-stage flow. It sequences stages, enforces pass/fail criteria,
    applies loop-back rules when a stage fails, and escalates clearly when human input is needed.
+   *(The meta plugin provides schema reference only — no orchestrator agent.)*
 
 Skills are loaded autonomously by Claude when you describe a task. Orchestrators are
 invoked explicitly when you want to run a complete flow end-to-end.
 
-Each orchestrator enforces a strict stage sequence with loop-back rules, and the 13 domains
-connect into a complete spec→tape-out pipeline. See **[docs/PIPELINE.md](docs/PIPELINE.md)**
-for the flow diagram and loop-back details, and [docs/MASTER_INDEX.md](docs/MASTER_INDEX.md)
-for per-domain flow documentation.
+---
+
+## Verification Pipeline
+
+```
+[Infrastructure Setup] → [Functional Verification] → [SoC IP Integration]
+                                │
+                    DUT bug found? → write fix_request → escalate to RTL designer
+```
+
+The verification orchestrator writes structured `fix_request` entries to `design_state.json`
+when bugs are found, with module, signal, waveform path, and expected/observed behavior.
+The RTL designer consumes these entries and applies fixes — no automated RTL dispatch loop
+is included in dv-agents.
 
 ---
 
 ## Memory System
 
-Each domain orchestrator reads from and writes to a two-tier persistent memory store under
-`memory/`:
+Each domain orchestrator reads from and writes to a two-tier persistent memory store:
 
 - **`memory/<domain>/knowledge.md`** — distilled summaries (failure patterns, tool flags, PDK
-  quirks) read by every orchestrator at session start.
+  quirks) read at session start.
 - **`memory/<domain>/experiences.jsonl`** — append-only run records written after every signoff
   or escalation.
 
-Distil accumulated records back into `knowledge.md` with the `memory-keeper` skill, and track
-QoR metrics across runs with `tools/qor_trends.py`. See **[memory/README.md](memory/README.md)**
-for the full schema, distilling workflow, and QoR trend examples.
+Distil accumulated records back into `knowledge.md` with the `memory-keeper` skill, track
+QoR metrics across runs with `tools/qor_trends.py`, and search past experiences with
+`tools/experience_search.py`. See **[memory/README.md](memory/README.md)** for full details.
 
 ---
 
 ## Repo Structure
 
 ```
-digital-chip-design-agents/
-├── .claude-plugin/marketplace.json   ← Marketplace registry (all 15 plugins)
+dv-agents/
+├── .claude-plugin/marketplace.json   ← Marketplace registry (4 plugins)
 ├── plugins/                          ← One isolated directory per plugin (skill + orchestrator)
+│   ├── verification/                 ← Functional verification (UVM)
+│   ├── soc/                          ← SoC IP integration
+│   ├── infrastructure/               ← EDA tool detection, wrappers, MCP, memory-keeper
+│   └── meta/                         ← Pipeline orchestration schema reference (skill only)
 ├── ides/                             ← IDE-specific config files (Copilot / Gemini / OpenCode / Codex)
-├── memory/                           ← Persistent two-tier per-domain memory (see memory/README.md)
-├── docs/                             ← Install guide, pipeline map, and per-domain flow docs
-├── tools/qor_trends.py               ← QoR metric trending and regression detection
+├── memory/                           ← Persistent two-tier per-domain memory
+├── docs/                             ← Install guide, pipeline map, and flow docs
+├── tools/                            ← QoR trends, experience search
 └── .github/workflows/                ← CI (validate.yml) and release (release.yml)
 ```
 
@@ -109,9 +113,9 @@ digital-chip-design-agents/
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome for:
-- Improved domain rules or QoR metrics in any SKILL.md
+- Improved verification rules or QoR metrics in SKILL.md
 - New loop-back rules in orchestrators
-- New skill domains (e.g., package/assembly, analog integration)
+- New verification-focused domains (e.g., formal verification, performance verification)
 
 CI validates all files on every PR — the validate workflow must pass before merge.
 

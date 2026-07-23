@@ -71,19 +71,9 @@ Valid domain names match the subdirectories under `memory/`:
 
 | Domain | JSONL path |
 |--------|-----------|
-| `architecture` | `memory/architecture/experiences.jsonl` |
-| `compiler` | `memory/compiler/experiences.jsonl` |
-| `dft` | `memory/dft/experiences.jsonl` |
-| `firmware` | `memory/firmware/experiences.jsonl` |
-| `formal` | `memory/formal/experiences.jsonl` |
-| `fpga` | `memory/fpga/experiences.jsonl` |
-| `hls` | `memory/hls/experiences.jsonl` |
 | `infrastructure` | `memory/infrastructure/experiences.jsonl` (opt-in; env-keyed) |
-| `pd` | `memory/pd/experiences.jsonl` |
-| `rtl-design` | `memory/rtl-design/experiences.jsonl` |
+| `meta` | `memory/meta/experiences.jsonl` |
 | `soc` | `memory/soc/experiences.jsonl` |
-| `sta` | `memory/sta/experiences.jsonl` |
-| `synthesis` | `memory/synthesis/experiences.jsonl` |
 | `verification` | `memory/verification/experiences.jsonl` |
 
 ---

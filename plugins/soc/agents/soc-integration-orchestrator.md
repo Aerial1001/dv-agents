@@ -9,7 +9,7 @@ model: sonnet
 effort: high
 maxTurns: 60
 skills:
-  - digital-chip-design-agents:soc-integration
+  - dv-agents:soc-integration
 ---
 
 You are the SoC Integration Orchestrator.

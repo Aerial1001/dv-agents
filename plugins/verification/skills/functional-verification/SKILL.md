@@ -17,7 +17,7 @@ allowed-tools: Read, Write, Bash
 
 When this skill is loaded and a user presents a verification task, **do not
 execute stages directly**. Immediately spawn the
-`digital-chip-design-agents:verification-orchestrator` agent and pass the full
+`dv-agents:verification-orchestrator` agent and pass the full
 user request and any available context to it. The orchestrator enforces the stage
 sequence, loop-back rules, and sign-off criteria defined below.
 
@@ -174,7 +174,7 @@ priority:     P0
 4. Corner cases: boundary values, max/min, overflow, underflow — one test each
 5. Reset during active transaction: at least one test per interface
 6. P0 tests must all pass before constrained-random phase begins
-7. DUT bug found during directed test: write a `fix_request` entry to `design_state.fix_requests[]` per the schema in the verification-orchestrator Design State section; terminate with `decision=escalate`. The pipeline-orchestrator (`chip-design-meta`) handles RTL re-invocation — do not loop locally or wait for user confirmation.
+7. DUT bug found during directed test: write a `fix_request` entry to `design_state.fix_requests[]` per the schema in the verification-orchestrator Design State section; terminate with `decision=escalate`. The RTL designer (or external tooling) handles RTL re-invocation — do not loop locally or wait for user confirmation. The dv-agents meta plugin provides the fix_request schema as a reference.
 
 ### QoR Metrics to Evaluate
 - All V-plan features covered by at least one directed test

@@ -1,10 +1,12 @@
 ---
 name: pipeline-orchestration
 description: >
-  Cross-domain loop orchestration for the chip design pipeline. Provides the
-  fix_request protocol, iteration-cap logic, escalation templates, and dispatch
-  patterns for routing verification/formal failures to the RTL orchestrator and
-  back. Use when driving the closed-loop verification↔RTL feedback cycle.
+  Schema reference for the dv-agents verification pipeline. Provides the
+  fix_request protocol, failure classification, retry strategy mapping,
+  constraint definitions, checkpoint protocol, and format_version specs.
+  Included for reference by verification and SoC orchestrators.
+  No pipeline-orchestrator agent is included — fix_requests are consumed
+  by human RTL designers or external tooling.
 version: 1.0.0
 author: chuanseng-ng
 license: MIT
@@ -15,11 +17,16 @@ allowed-tools: Read, Write, Bash
 
 ## Invocation
 
-- **If invoked by a user** presenting a pipeline loop task: immediately spawn the
-  `digital-chip-design-agents:pipeline-orchestrator` agent and pass the full user
-  request and any available context. Do not execute stages directly.
-- **If invoked inside another orchestrator**: read `design_state.json`, summarise open
-  `fix_requests[]`, and return — do not spawn subagents (anti-recursion rule).
+**This skill is included for schema reference only.** dv-agents does not include
+the pipeline-orchestrator agent. fix_requests are written by the verification
+orchestrator and consumed by human RTL designers or external tooling.
+
+- **If invoked by a user**: explain that dv-agents is verification-only — no
+  automated RTL dispatch loop is included. Point them to the verification
+  orchestrator for writing fix_requests.
+- **If invoked inside a domain orchestrator**: read `design_state.json`, consult
+  the schema sections below for fix_request format, failure_class mapping,
+  constraints, and checkpoint protocol. Do not spawn subagents.
 
 ## Purpose
 

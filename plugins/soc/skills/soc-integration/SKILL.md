@@ -17,7 +17,7 @@ allowed-tools: Read, Write, Bash
 
 When this skill is loaded and a user presents a SoC integration task, **do not
 execute stages directly**. Immediately spawn the
-`digital-chip-design-agents:soc-integration-orchestrator` agent and pass the full
+`dv-agents:soc-integration-orchestrator` agent and pass the full
 user request and any available context to it. The orchestrator enforces the stage
 sequence, loop-back rules, and sign-off criteria defined below.
 

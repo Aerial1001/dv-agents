@@ -1,54 +1,33 @@
-# Orchestrator Flows & End-to-End Pipeline
+# Orchestrator Flows & Pipeline
 
 This page describes how the domain orchestrators sequence their stages and how
-the 13 design domains connect into a full chip design pipeline. For the complete
-per-domain flow detail, see [`MASTER_INDEX.md`](MASTER_INDEX.md).
+they connect into a DV verification pipeline. For per-domain flow detail, see
+[`MASTER_INDEX.md`](MASTER_INDEX.md).
 
 ## Orchestrator Flows
 
 Each orchestrator enforces a strict stage sequence with loop-back rules.
 
-**Physical Design** (example):
+**Functional Verification**:
 ```
-floorplan → placement → CTS → routing →
-timing_opt → power_opt → area_opt → signoff
+tb_architecture → test_planning → uvm_tb_build → directed_tests →
+constrained_random → coverage_analysis → regression_signoff
 ```
-If routing DRC fails → retry routing (max 3×).
-If signoff timing fails → loop back to timing_opt (max 2×).
-If any loop exceeds its limit → escalate to you with full state + recommendations.
+If DUT bug found during directed tests → write fix_request, escalate to RTL designer.
+If coverage_analysis: functional_coverage < 100% → loop back to constrained_random (max 5×).
+If regression_signoff FAIL → loop back to constrained_random (max 3×).
 
-All 13 domain orchestrators follow the same pattern with domain-specific stages
-and criteria.
+**SoC IP Integration**:
+```
+ip_procurement → ip_configuration → bus_fabric_setup → top_integration → chip_level_sim → integration_signoff
+```
+If chip_level_sim FAIL → loop back to top_integration (max 3×).
+If bus protocol violation → loop back to bus_fabric_setup (max 2×).
 
-## End-to-End Pipeline
-
-The 13 design domains (+ the meta pipeline orchestrator) map to a complete chip
-design pipeline:
+## Pipeline
 
 ```
-[Specification]
-      │
-      ▼
-[1. Architecture Evaluation] ──► microarch doc
-      │
-      ├──► [2. RTL Design]  ──► [3. HLS] (algorithm blocks)
-      │           │
-      │           │           ├──► [4. Functional Verification] ◄──┐
-      │           └──► [5. Formal Verification]    ◄──┤
-      │                       │ (bug found)           │ fix_request loop
-      │                       │                    [Meta / Pipeline Orch.]
-      │                       ▼                       │
-      │              [6. Logic Synthesis]          ────┘
-      │                       │
-      │           ┌───────────┼───────────┐
-      │           ▼           ▼           ▼
-      │      [7. DFT]  [8. Physical  [9. STA]
-      │                   Design]
-      │                       │
-      │                   [Tape-out]
-      │
-      ├──► [10. SoC IP Integration]  (if SoC-level work)
-      ├──► [11. Compiler Toolchain]  (if custom CPU)
-      ├──► [12. Embedded Firmware]
-      └──► [13. FPGA Emulation]      (pre-silicon SW dev)
+[Infrastructure Setup] → [Functional Verification] → [SoC IP Integration]
+                                │
+                    DUT bug found? → write fix_request → RTL designer
 ```

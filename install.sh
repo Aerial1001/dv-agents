@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — installs digital-chip-design-agents plugins
+# install.sh — installs dv-agents plugins
 #
 # Usage:
 #   bash install.sh                         # auto-detect installed agents + confirm
@@ -22,7 +22,7 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MARKETPLACE="digital-chip-design-agents"
+MARKETPLACE="dv-agents"
 # Each plugin's cache version is read from its own .claude-plugin/plugin.json
 # below, so plugins at different versions land in the correct path.
 

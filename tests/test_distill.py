@@ -12,12 +12,12 @@ DISTILL = Path(__file__).resolve().parents[1] / \
 
 
 def test_every_valid_domain_has_metric_fields(distill):
-    # The 13 design domains + infrastructure must each be registered.
-    assert len(distill.VALID_DOMAINS) == 14
+    # 3 design domains + meta must each be registered.
+    assert len(distill.VALID_DOMAINS) == 4
     for dom in distill.VALID_DOMAINS:
         assert dom in distill.METRIC_FIELDS, f"{dom} missing from METRIC_FIELDS"
-    assert "infrastructure" in distill.VALID_DOMAINS
-    assert "synthesis" in distill.VALID_DOMAINS
+    assert "verification" in distill.VALID_DOMAINS
+    assert "soc" in distill.VALID_DOMAINS
 
 
 def test_load_records_skips_malformed_and_non_objects(distill, tmp_path):

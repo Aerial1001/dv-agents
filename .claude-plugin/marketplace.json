@@ -1,121 +1,33 @@
 {
-  "name": "digital-chip-design-agents",
+  "name": "dv-agents",
   "owner": {
     "name": "chuanseng-ng",
     "github": "chuanseng-ng"
   },
   "metadata": {
-    "description": "Full digital chip design pipeline — 15 plugins across 14 domains, from infrastructure setup through tape-out and firmware, with closed-loop verification↔RTL feedback.",
-    "version": "1.3.0"
+    "description": "DV verification pipeline — functional verification, SoC IP integration, EDA infrastructure, with fix_request protocol for RTL designer handoff. Forked from digital-chip-design-agents v1.3.0.",
+    "version": "1.0.0"
   },
   "plugins": [
     {
-      "name": "chip-design-architecture",
-      "description": "Microarchitecture exploration, PPA estimation, risk assessment, and sign-off",
-      "source": "./plugins/architecture",
-      "strict": true,
-      "skills": ["./skills/architecture"],
-      "agents": ["./agents/architecture-orchestrator.md"]
-    },
-    {
-      "name": "chip-design-rtl",
-      "description": "SystemVerilog RTL design — module planning, coding standards, lint, CDC, synthesis check",
-      "source": "./plugins/rtl-design",
-      "strict": true,
-      "skills": ["./skills/rtl-design"],
-      "agents": ["./agents/rtl-design-orchestrator.md"]
-    },
-    {
       "name": "chip-design-verification",
-      "description": "UVM testbench, test planning, constrained random, coverage closure, regression",
+      "description": "UVM testbench, test planning, constrained random, coverage closure, regression, and fix_request writing for DUT bugs",
       "source": "./plugins/verification",
       "strict": true,
       "skills": ["./skills/functional-verification"],
       "agents": ["./agents/verification-orchestrator.md"]
     },
     {
-      "name": "chip-design-formal",
-      "description": "Formal property verification (FPV) and logical equivalence checking (LEC)",
-      "source": "./plugins/formal",
-      "strict": true,
-      "skills": ["./skills/formal-verification"],
-      "agents": ["./agents/formal-orchestrator.md"]
-    },
-    {
-      "name": "chip-design-synthesis",
-      "description": "Logic synthesis — SDC constraints, compile optimization, netlist QC and LEC",
-      "source": "./plugins/synthesis",
-      "strict": true,
-      "skills": ["./skills/logic-synthesis"],
-      "agents": ["./agents/synthesis-orchestrator.md"]
-    },
-    {
-      "name": "chip-design-dft",
-      "description": "Design for Test — scan insertion, ATPG, MBIST, JTAG boundary scan",
-      "source": "./plugins/dft",
-      "strict": true,
-      "skills": ["./skills/dft"],
-      "agents": ["./agents/dft-orchestrator.md"]
-    },
-    {
-      "name": "chip-design-sta",
-      "description": "Static timing analysis — multi-corner analysis, exception review, ECO guidance",
-      "source": "./plugins/sta",
-      "strict": true,
-      "skills": ["./skills/sta"],
-      "agents": ["./agents/sta-orchestrator.md"]
-    },
-    {
-      "name": "chip-design-hls",
-      "description": "High-level synthesis — C/C++ to RTL, directive optimization, co-simulation",
-      "source": "./plugins/hls",
-      "strict": true,
-      "skills": ["./skills/hls"],
-      "agents": ["./agents/hls-orchestrator.md"]
-    },
-    {
-      "name": "chip-design-pd",
-      "description": "Physical design — floorplan, placement, CTS, routing, timing/power/area opt, sign-off",
-      "source": "./plugins/pd",
-      "strict": true,
-      "skills": ["./skills/physical-design"],
-      "agents": ["./agents/physical-design-orchestrator.md"]
-    },
-    {
       "name": "chip-design-soc",
-      "description": "SoC IP integration — procurement, bus fabric, chip-level simulation",
+      "description": "SoC IP integration — procurement, bus fabric, chip-level simulation sign-off",
       "source": "./plugins/soc",
       "strict": true,
       "skills": ["./skills/soc-integration"],
       "agents": ["./agents/soc-integration-orchestrator.md"]
     },
     {
-      "name": "chip-design-compiler",
-      "description": "Compiler toolchain — LLVM/GCC backend, assembler, linker, runtime libs for custom ISA",
-      "source": "./plugins/compiler",
-      "strict": true,
-      "skills": ["./skills/compiler-toolchain"],
-      "agents": ["./agents/compiler-orchestrator.md"]
-    },
-    {
-      "name": "chip-design-firmware",
-      "description": "Embedded firmware — BSP, peripheral drivers, RTOS integration, validation",
-      "source": "./plugins/firmware",
-      "strict": true,
-      "skills": ["./skills/embedded-firmware"],
-      "agents": ["./agents/firmware-orchestrator.md"]
-    },
-    {
-      "name": "chip-design-fpga",
-      "description": "FPGA emulation — ASIC-to-FPGA adaptation, partitioning, bring-up, SW validation",
-      "source": "./plugins/fpga",
-      "strict": true,
-      "skills": ["./skills/fpga-emulation"],
-      "agents": ["./agents/fpga-orchestrator.md"]
-    },
-    {
       "name": "chip-design-infrastructure",
-      "description": "EDA tool detection, output-filtering shell wrappers, MCP server config templates, and memory distillation for all chip-design domain agents",
+      "description": "EDA tool detection, output-filtering shell wrappers, MCP server config templates, and memory distillation for verification and SoC domains",
       "source": "./plugins/infrastructure",
       "strict": true,
       "skills": ["./skills/infrastructure", "./skills/memory-keeper"],
@@ -123,11 +35,11 @@
     },
     {
       "name": "chip-design-meta",
-      "description": "Cross-domain pipeline orchestrator — drives closed-loop verification↔RTL feedback via design_state.json fix_requests, enforcing a 3-iteration cap with user escalation",
+      "description": "Pipeline orchestration schema reference — fix_request protocol, failure classification, retry strategy mapping, constraints, and checkpoint definitions. No agent included in dv-agents; fix_requests are consumed by human RTL designers.",
       "source": "./plugins/meta",
       "strict": true,
       "skills": ["./skills/pipeline-orchestration"],
-      "agents": ["./agents/pipeline-orchestrator.md"]
+      "agents": []
     }
   ]
 }

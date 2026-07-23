@@ -70,19 +70,9 @@ tool flags, and PDK/tool quirks. Intended to be periodically updated by a memory
 
 | Domain       | key_metrics fields                                                    |
 |--------------|-----------------------------------------------------------------------|
-| architecture | `selected_arch`, `estimated_mhz`, `estimated_area_um2`              |
-| compiler     | `isa_tests_passed`, `abi_compliant`, `regression_pass_rate`          |
-| dft          | `scan_coverage_pct`, `atpg_fault_coverage_pct`                       |
-| firmware     | `build_pass`, `flash_size_kb`, `bsp_tests_passed`                    |
-| formal       | `proved`, `failed`, `unknown`                                         |
-| fpga         | `lut_count`, `fmax_mhz`, `timing_met`                                |
-| hls          | `latency_cycles`, `dsp_count`, `ii_achieved`                         |
 | infrastructure | `tools_detected`, `tools_missing`, `wrappers_deployed`, `mcp_servers_configured`, `module_system`, `tool_versions` |
-| pd           | `wns_ns`, `drc_violations`, `lvs_errors`, `gds_area_um2`            |
-| rtl-design   | `lint_errors`, `cdc_violations`, `synth_check_pass`                  |
+| meta         | `fix_requests_processed`, `iterations_used`, `outcome`               |
 | soc          | `ip_blocks_integrated`, `simulation_pass`, `memory_map_conflicts`    |
-| sta          | `setup_wns_ns`, `hold_wns_ns`, `tns_ns`, `failing_paths`            |
-| synthesis    | `wns_ns`, `cells`, `area_um2`, `lec_unmatched`                       |
 | verification | `functional_coverage_pct`, `regression_failures`, `assertions_triggered` |
 
 ## Directory Layout
@@ -92,22 +82,9 @@ memory/
 ├── README.md                    ← this file
 ├── designs/                     ← per-design metric history (future use)
 │   └── .gitkeep
-├── architecture/
-│   ├── knowledge.md             ← Tier 2: seeded domain knowledge
-│   ├── experiences.jsonl        ← Tier 1: created on first run
-│   └── run_state.md             ← active run identity (created at session start)
-├── compiler/
-├── dft/
-├── firmware/
-├── formal/
-├── fpga/
-├── hls/
 ├── infrastructure/             ← opt-in, environment-keyed (see note below)
-├── pd/
-├── rtl-design/
+├── meta/                       ← pipeline orchestration cross-domain knowledge
 ├── soc/
-├── sta/
-├── synthesis/
 └── verification/
 ```
 
@@ -265,5 +242,5 @@ session start — with this `domain`, the current goal/issue as `query`, and kno
 `filters` (`pdk`, `tool_used`, `design_name`) — to surface ranked prior fixes.
 This **augments, never replaces**, the `knowledge.md` read: if the tool is
 absent, orchestrators proceed with `knowledge.md` exactly as before (the same
-skip-silently pattern as the optional claude-mem index above). All 15
+skip-silently pattern as the optional claude-mem index above). All 3
 orchestrators carry this optional note in their session-start memory block.

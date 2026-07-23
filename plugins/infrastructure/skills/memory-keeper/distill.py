@@ -30,37 +30,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from memory_root import resolve_memory_root  # noqa: E402
 
 VALID_DOMAINS = [
-    "architecture",
-    "compiler",
-    "dft",
-    "firmware",
-    "formal",
-    "fpga",
-    "hls",
     "infrastructure",
-    "pd",
-    "rtl-design",
+    "meta",
     "soc",
-    "sta",
-    "synthesis",
     "verification",
 ]
 
 # Numeric key_metrics fields per domain (used for range computation)
 METRIC_FIELDS = {
-    "architecture": ["estimated_mhz", "estimated_area_um2"],
-    "compiler": ["regression_pass_rate"],
-    "dft": ["scan_coverage_pct", "atpg_fault_coverage_pct"],
-    "firmware": ["flash_size_kb"],
-    "formal": ["proved", "failed", "unknown"],
-    "fpga": ["lut_count", "fmax_mhz"],
-    "hls": ["latency_cycles", "dsp_count"],
     "infrastructure": ["tools_detected", "tools_missing", "wrappers_deployed", "mcp_servers_configured"],
-    "pd": ["wns_ns", "drc_violations", "lvs_errors", "gds_area_um2"],
-    "rtl-design": ["lint_errors", "cdc_violations"],
+    "meta": [],
     "soc": ["ip_blocks_integrated", "memory_map_conflicts"],
-    "sta": ["setup_wns_ns", "hold_wns_ns", "tns_ns", "failing_paths"],
-    "synthesis": ["wns_ns", "cells", "area_um2", "lec_unmatched"],
     "verification": ["functional_coverage_pct", "regression_failures", "assertions_triggered"],
 }
 

@@ -1,10 +1,10 @@
 {
-  "name": "digital-chip-design-agents",
-  "version": "1.3.0",
-  "description": "Full digital chip design pipeline — 15 Claude Code plugins across 14 domains, from infrastructure setup through tape-out and firmware, with closed-loop verification↔RTL feedback.",
+  "name": "dv-agents",
+  "version": "1.0.0",
+  "description": "DV verification pipeline — 4 Claude Code plugins for functional verification, SoC integration, and EDA infrastructure, with fix_request protocol for RTL designer handoff.",
   "type": "module",
   "bin": {
-    "digital-chip-design-agents": "bin/install.mjs"
+    "dv-agents": "bin/install.mjs"
   },
   "engines": {
     "node": ">=18"
@@ -21,23 +21,24 @@
   "keywords": [
     "claude",
     "claude-code",
-    "chip-design",
+    "dv",
+    "verification",
+    "uvm",
     "asic",
-    "fpga",
     "rtl",
     "verilog",
     "systemverilog",
     "eda",
-    "vlsi",
+    "soc",
     "agents"
   ],
-  "homepage": "https://github.com/chuanseng-ng/digital-chip-design-agents#readme",
+  "homepage": "https://github.com/chuanseng-ng/dv-agents#readme",
   "bugs": {
-    "url": "https://github.com/chuanseng-ng/digital-chip-design-agents/issues"
+    "url": "https://github.com/chuanseng-ng/dv-agents/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/chuanseng-ng/digital-chip-design-agents.git"
+    "url": "git+https://github.com/chuanseng-ng/dv-agents.git"
   },
   "author": {
     "name": "chuanseng-ng",
