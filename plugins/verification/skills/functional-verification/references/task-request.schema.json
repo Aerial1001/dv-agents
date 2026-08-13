@@ -1,0 +1,331 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dv-agents:schema:task-request:1.0",
+  "title": "DV worker task request",
+  "description": "An immutable, bounded worker request created and sealed by the main orchestration agent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "run_id",
+    "role",
+    "action",
+    "phase",
+    "attempt",
+    "lineage_id",
+    "retry_kind",
+    "requested_by",
+    "reply_to",
+    "project_root",
+    "input_revision",
+    "revision_paths",
+    "inputs",
+    "scope",
+    "acceptance",
+    "context",
+    "prior_result_refs",
+    "expected_result_path"
+  ],
+  "properties": {
+    "schema_version": {"const": "dv-task/1.0"},
+    "task_id": {"$ref": "#/$defs/identifier"},
+    "run_id": {"$ref": "#/$defs/identifier"},
+    "role": {"$ref": "#/$defs/role"},
+    "action": {"$ref": "#/$defs/action"},
+    "phase": {"$ref": "#/$defs/phase"},
+    "attempt": {"type": "integer", "minimum": 1},
+    "lineage_id": {"$ref": "#/$defs/identifier"},
+    "retry_kind": {"$ref": "#/$defs/retryKind"},
+    "requested_by": {"const": "main"},
+    "reply_to": {"const": "main"},
+    "project_root": {"type": "string", "minLength": 1},
+    "input_revision": {"$ref": "#/$defs/revision"},
+    "revision_paths": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/path"}
+    },
+    "inputs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/input"}
+    },
+    "scope": {"$ref": "#/$defs/scope"},
+    "acceptance": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "context": {"$ref": "#/$defs/context"},
+    "prior_result_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/path"}
+    },
+    "expected_result_path": {"$ref": "#/$defs/path"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"role": {"const": "builder"}}, "required": ["role"]},
+      "then": {
+        "properties": {
+          "action": {"$ref": "#/$defs/builderAction"},
+          "scope": {
+            "allOf": [
+              {"$ref": "#/$defs/scope"},
+              {"properties": {"write": {"minItems": 1}}}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"role": {"const": "reviewer"}}, "required": ["role"]},
+      "then": {
+        "properties": {
+          "action": {"$ref": "#/$defs/reviewerAction"},
+          "input_revision": {"$ref": "#/$defs/revision"},
+          "scope": {
+            "allOf": [
+              {"$ref": "#/$defs/scope"},
+              {"properties": {"write": {"maxItems": 0}}}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"role": {"const": "runner"}}, "required": ["role"]},
+      "then": {
+        "properties": {
+          "action": {"$ref": "#/$defs/runnerAction"},
+          "context": {
+            "allOf": [
+              {"$ref": "#/$defs/context"},
+              {
+                "required": ["command", "cwd", "tool", "timeout_s"],
+                "properties": {
+                  "command": {"type": "string", "minLength": 1},
+                  "cwd": {"type": "string", "minLength": 1},
+                  "tool": {"type": "string", "minLength": 1},
+                  "timeout_s": {"type": "number", "exclusiveMinimum": 0}
+                }
+              }
+            ]
+          },
+          "scope": {
+            "allOf": [
+              {"$ref": "#/$defs/scope"},
+              {"properties": {"write": {"minItems": 1, "maxItems": 1}}}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "action": {"not": {"const": "PREFLIGHT"}}
+        },
+        "required": ["role", "action"]
+      },
+      "then": {"properties": {"input_revision": {"$ref": "#/$defs/revision"}}}
+    },
+    {
+      "if": {"properties": {"role": {"const": "debugger"}}, "required": ["role"]},
+      "then": {
+        "properties": {
+          "action": {"$ref": "#/$defs/debuggerAction"},
+          "input_revision": {"$ref": "#/$defs/revision"},
+          "scope": {
+            "allOf": [
+              {"$ref": "#/$defs/scope"},
+              {"properties": {"write": {"maxItems": 0}}}
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$"
+    },
+    "path": {"type": "string", "minLength": 1, "pattern": "^[^\\u0000]+$"},
+    "revision": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "nullableRevision": {
+      "oneOf": [{"$ref": "#/$defs/revision"}, {"type": "null"}]
+    },
+    "role": {"enum": ["builder", "reviewer", "runner", "debugger"]},
+    "builderAction": {
+      "enum": [
+        "WRITE_VPLAN",
+        "BUILD_SMOKE_FOUNDATION",
+        "IMPLEMENT_FEATURE_BATCH",
+        "APPLY_REVIEW_FIX",
+        "APPLY_DEBUG_FIX",
+        "COVERAGE_CLOSURE"
+      ]
+    },
+    "reviewerAction": {
+      "enum": ["REVIEW_VPLAN", "REVIEW_TB", "REVIEW_FIX", "SIGNOFF_AUDIT"]
+    },
+    "runnerAction": {
+      "enum": ["PREFLIGHT", "COMPILE_ELAB", "RUN_CASE", "RUN_REGRESSION", "MERGE_COVERAGE"]
+    },
+    "debuggerAction": {
+      "enum": ["DIAGNOSE_FAILURE", "REDIAGNOSE_WITH_EVIDENCE"]
+    },
+    "action": {
+      "enum": [
+        "WRITE_VPLAN",
+        "BUILD_SMOKE_FOUNDATION",
+        "IMPLEMENT_FEATURE_BATCH",
+        "APPLY_REVIEW_FIX",
+        "APPLY_DEBUG_FIX",
+        "COVERAGE_CLOSURE",
+        "REVIEW_VPLAN",
+        "REVIEW_TB",
+        "REVIEW_FIX",
+        "SIGNOFF_AUDIT",
+        "PREFLIGHT",
+        "COMPILE_ELAB",
+        "RUN_CASE",
+        "RUN_REGRESSION",
+        "MERGE_COVERAGE",
+        "DIAGNOSE_FAILURE",
+        "REDIAGNOSE_WITH_EVIDENCE"
+      ]
+    },
+    "phase": {
+      "enum": [
+        "INIT",
+        "PLAN",
+        "PREFLIGHT",
+        "SMOKE",
+        "FEATURES",
+        "RANDOM",
+        "COVERAGE",
+        "REGRESSION",
+        "SIGNOFF",
+        "WAITING_HUMAN",
+        "BLOCKED",
+        "COMPLETE"
+      ]
+    },
+    "retryKind": {
+      "enum": ["dispatch", "review", "environment", "tb-fix", "debug-evidence", "none"]
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "required"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "path": {"$ref": "#/$defs/path"},
+        "required": {"type": "boolean"}
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read", "write"],
+      "properties": {
+        "read": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/path"}
+        },
+        "write": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/path"}
+        },
+        "feature_ids": {"$ref": "#/$defs/identifierList"},
+        "test_ids": {"$ref": "#/$defs/identifierList"},
+        "seeds": {"$ref": "#/$defs/seedList"},
+        "files": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/path"}
+        }
+      }
+    },
+    "identifierList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/identifier"}
+    },
+    "seedList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "integer", "minimum": 0}
+    },
+    "nullableIdentifier": {
+      "oneOf": [{"$ref": "#/$defs/identifier"}, {"type": "null"}]
+    },
+    "nullableString": {
+      "oneOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "feature_ids": {"$ref": "#/$defs/identifierList"},
+        "test_ids": {"$ref": "#/$defs/identifierList"},
+        "finding_ids": {"$ref": "#/$defs/identifierList"},
+        "affected_ids": {"$ref": "#/$defs/identifierList"},
+        "work_item_ids": {"$ref": "#/$defs/identifierList"},
+        "coverage_ids": {"$ref": "#/$defs/identifierList"},
+        "failure_id": {"$ref": "#/$defs/nullableIdentifier"},
+        "random_campaign_id": {"$ref": "#/$defs/nullableIdentifier"},
+        "campaign_id": {"$ref": "#/$defs/nullableIdentifier"},
+        "command": {"$ref": "#/$defs/nullableString"},
+        "cwd": {"$ref": "#/$defs/nullableString"},
+        "tool": {"$ref": "#/$defs/nullableString"},
+        "tool_version": {"$ref": "#/$defs/nullableString"},
+        "simulator": {"$ref": "#/$defs/nullableString"},
+        "timeout_s": {"type": "number", "exclusiveMinimum": 0},
+        "seeds": {"$ref": "#/$defs/seedList"},
+        "regression_scope": {
+          "enum": ["CUMULATIVE", "RANDOM", "FROZEN"]
+        },
+        "case_manifest": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/caseManifestItem"}
+        },
+        "acceptance_markers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "extra_diagnostics": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "parameters": {"type": "object"},
+        "environment": {"type": "object"}
+      }
+    },
+    "caseManifestItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["test", "seed"],
+      "properties": {
+        "test": {"type": "string", "minLength": 1},
+        "seed": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

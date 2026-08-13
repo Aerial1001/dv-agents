@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# install.sh — installs dv-agents plugins
+# install.sh — installs the chip-design-verification plugin from this repo
 #
 # Usage:
 #   bash install.sh                         # auto-detect installed agents + confirm
 #   bash install.sh --yes                   # auto-detect, no confirmation prompt
+#   bash install.sh --check                 # validate repo without installing
 #   bash install.sh --ide claude            # Claude Code (explicit)
 #   bash install.sh --ide copilot           # GitHub Copilot (.github/ in cwd)
 #   bash install.sh --ide gemini            # Gemini Code Assist (GEMINI.md in cwd)
@@ -12,7 +13,7 @@
 #   bash install.sh --ide opencode --global # OpenCode global (~/.config/opencode/)
 #   bash install.sh --ide codex             # OpenAI Codex CLI (AGENTS.md in cwd)
 #   bash install.sh --ide codex --global    # OpenAI Codex CLI global (~/.codex/instructions.md)
-#   bash install.sh --ide all               # Claude Code + all four other IDEs (copilot, gemini, opencode, codex)
+#   bash install.sh --ide all               # all five agents
 #
 # With no --ide flag the script detects which of the five supported agents
 # (claude, codex, opencode, gemini, copilot) are present and installs to them
@@ -23,15 +24,14 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MARKETPLACE="dv-agents"
-# Each plugin's cache version is read from its own .claude-plugin/plugin.json
-# below, so plugins at different versions land in the correct path.
 
 # ── Parse flags ───────────────────────────────────────────────────────────────
 IDE=""
 GLOBAL="false"
 YES="false"
+CHECK_ONLY="false"
 while [[ $# -gt 0 ]]; do
-  case $1 in
+  case "$1" in
     --ide)
       # Guard against a trailing `--ide` so `set -u` doesn't abort on $2 before
       # the user sees a usage message.
@@ -47,14 +47,19 @@ while [[ $# -gt 0 ]]; do
     --yes|-y)
       YES="true"; shift
       ;;
+    --check)
+      CHECK_ONLY="true"; shift
+      ;;
     -h|--help)
-      echo "Usage: bash install.sh [--ide claude|copilot|gemini|opencode|codex|all] [--global] [--yes]"
+      echo "Usage: bash install.sh [--ide claude|copilot|gemini|opencode|codex|all] [--global] [--yes] [--check]"
       echo "  With no --ide, detects installed agents and installs to them after confirmation."
+      echo "  --yes     Skip confirmation prompts."
+      echo "  --check   Validate the repo without installing."
       exit 0
       ;;
     *)
       echo "Unknown argument: $1"
-      echo "Usage: bash install.sh [--ide claude|copilot|gemini|opencode|codex|all] [--global] [--yes]"
+      echo "Usage: bash install.sh [--ide claude|copilot|gemini|opencode|codex|all] [--global] [--yes] [--check]"
       exit 1
       ;;
   esac
@@ -72,14 +77,56 @@ fi
 
 # ── Shared sanity check ───────────────────────────────────────────────────────
 if [[ ! -f "$REPO_DIR/.claude-plugin/marketplace.json" ]]; then
-  echo "ERROR: Cannot locate repo root. Ensure install.sh is inside the cloned repo."
+  echo "ERROR: Cannot locate repo root. Run this script from inside the cloned repo."
   exit 1
 fi
 
-# ── Detection (read-only) ─────────────────────────────────────────────────────
+PLUGIN_SRC="$REPO_DIR/plugins/verification"
+if [[ ! -f "$PLUGIN_SRC/.claude-plugin/plugin.json" ]]; then
+  echo "ERROR: plugin source not found at $PLUGIN_SRC"
+  exit 1
+fi
+
+# ── Check mode (idempotent, no side effects) ─────────────────────────────────
+check_repo() {
+  echo "=== Repository validation ==="
+  if command -v python3 &>/dev/null; then
+    python3 "$REPO_DIR/scripts/validate_repo.py" || {
+      echo "WARNING: Repository validation found issues (see above)."
+      echo "  The plugin may still work; fix the reported problems if any are fatal."
+    }
+  else
+    echo "WARNING: python3 not found — skipping structural validation."
+  fi
+
+  VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' \
+    "$PLUGIN_SRC/.claude-plugin/plugin.json" 2>/dev/null || echo "unknown")"
+  echo "Plugin  : chip-design-verification"
+  echo "Version : $VERSION"
+  echo "Source  : $PLUGIN_SRC"
+  echo ""
+
+  # List included agents and skills
+  echo "Agents:"
+  for f in "$PLUGIN_SRC"/agents/*.md; do
+    [[ -f "$f" ]] && echo "  - $(basename "$f" .md)"
+  done
+  echo "Skills:"
+  for f in "$PLUGIN_SRC"/skills/*/SKILL.md; do
+    [[ -f "$f" ]] && echo "  - $(basename "$(dirname "$f")")"
+  done
+}
+
+check_repo
+
+if [[ "$CHECK_ONLY" == "true" ]]; then
+  echo ""
+  echo "Check complete. No changes made."
+  exit 0
+fi
+
+# ── Detection (read-only) ────────────────────────────────────────────────────
 # A target counts as installed if its CLI is on PATH or its config dir exists.
-# Mirrors bin/detect.mjs. Copilot is project-scoped, so it is detected only via
-# the gh / copilot CLI.
 is_installed() {
   case "$1" in
     claude)   command -v claude   >/dev/null 2>&1 || [[ -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" ]] ;;
@@ -91,7 +138,6 @@ is_installed() {
 }
 
 # Where each target writes, so the confirmation shows repo vs $HOME vs config dir.
-# Mirrors the destinations in bin/detect.mjs and the per-IDE install blocks below.
 destination_for() {
   case "$1" in
     claude)   echo "${CLAUDE_CONFIG_DIR:-$HOME/.claude} (global plugin cache)" ;;
@@ -102,45 +148,13 @@ destination_for() {
   esac
 }
 
-# ── Plugin list ───────────────────────────────────────────────────────────────
-PLUGINS=(
-  "chip-design-architecture"
-  "chip-design-rtl"
-  "chip-design-verification"
-  "chip-design-formal"
-  "chip-design-synthesis"
-  "chip-design-dft"
-  "chip-design-sta"
-  "chip-design-hls"
-  "chip-design-pd"
-  "chip-design-soc"
-  "chip-design-compiler"
-  "chip-design-firmware"
-  "chip-design-fpga"
-  "chip-design-infrastructure"
-  "chip-design-meta"
-)
-
-# ── Plugin → source directory mapping ────────────────────────────────────────
+# ── Plugin list (single plugin in this repo) ────────────────────────────────
+PLUGINS=("chip-design-verification")
 declare -A PLUGIN_DIRS=(
-  ["chip-design-architecture"]="architecture"
-  ["chip-design-rtl"]="rtl-design"
   ["chip-design-verification"]="verification"
-  ["chip-design-formal"]="formal"
-  ["chip-design-synthesis"]="synthesis"
-  ["chip-design-dft"]="dft"
-  ["chip-design-sta"]="sta"
-  ["chip-design-hls"]="hls"
-  ["chip-design-pd"]="pd"
-  ["chip-design-soc"]="soc"
-  ["chip-design-compiler"]="compiler"
-  ["chip-design-firmware"]="firmware"
-  ["chip-design-fpga"]="fpga"
-  ["chip-design-infrastructure"]="infrastructure"
-  ["chip-design-meta"]="meta"
 )
 
-# ── Build the selection set ───────────────────────────────────────────────────
+# ── Build the selection set ──────────────────────────────────────────────────
 declare -A SEL=()
 ALL_TARGETS=(claude codex opencode gemini copilot)
 
@@ -191,12 +205,9 @@ if [[ ${#SEL[@]} -eq 0 ]]; then
   exit 0
 fi
 
-# ── python3 is required for every target in the shell installer ───────────────
-# (Even the Claude block reads plugin versions and merges settings.json via
-# python3.) The Python-free path is the npm installer: npx digital-chip-design-agents.
+# ── python3 is required for every target in the shell installer ──────────────
 if ! command -v python3 &>/dev/null; then
   echo "ERROR: python3 is required by install.sh but was not found in PATH."
-  echo "  For a Python-free install, use: npx digital-chip-design-agents"
   exit 1
 fi
 
@@ -214,83 +225,127 @@ if [[ -n "${SEL[claude]:-}" ]]; then
     CLAUDE_DIR="${HOME}/.claude"
   fi
 
-  CACHE_DIR="$CLAUDE_DIR/plugins/cache/$MARKETPLACE"
-  SETTINGS="$CLAUDE_DIR/settings.json"
-
-  echo "Claude config : $CLAUDE_DIR"
-  echo "Plugin cache  : $CACHE_DIR"
-  echo ""
-
   if [[ ! -d "$CLAUDE_DIR" ]]; then
-    echo "ERROR: Claude config directory not found at $CLAUDE_DIR"
+    echo ""
+    echo "Claude Code config directory not found at $CLAUDE_DIR"
     echo "  Make sure Claude Code is installed and has been run at least once."
+    echo ""
+    echo "You can still prepare the plugin and load it with --plugin-dir later:"
+    echo "  claude --plugin-dir $PLUGIN_SRC"
     exit 1
   fi
 
+  echo ""
   echo "Installing Claude Code plugin cache..."
   for plugin in "${PLUGINS[@]}"; do
     subdir="${PLUGIN_DIRS[$plugin]}"
     src="$REPO_DIR/plugins/$subdir"
     version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$src/.claude-plugin/plugin.json")"
-    dest="$CACHE_DIR/$plugin/$version"
+    dest="$CLAUDE_DIR/plugins/cache/$MARKETPLACE/$plugin/$version"
     rm -rf "$dest"
     mkdir -p "$dest"
-    cp -r "$src/agents"         "$dest/"
-    cp -r "$src/skills"         "$dest/"
-    cp -r "$src/.claude-plugin" "$dest/"
+    cp -r "$src/agents"          "$dest/"
+    cp -r "$src/skills"          "$dest/"
+    cp -r "$src/.claude-plugin"  "$dest/"
+    mkdir -p "$dest/scripts"
+    cp -r "$REPO_DIR/scripts"/*  "$dest/scripts/" 2>/dev/null || true
+    rm -rf "$dest/scripts/__pycache__"
     [[ -f "$REPO_DIR/README.md" ]] && cp "$REPO_DIR/README.md" "$dest/"
     [[ -f "$REPO_DIR/LICENSE" ]]   && cp "$REPO_DIR/LICENSE"   "$dest/"
-    echo "  [OK] $plugin"
+    echo "  [OK] $plugin v$version cached"
   done
 
+  SETTINGS="$CLAUDE_DIR/settings.json"
   echo ""
   echo "Updating $SETTINGS ..."
 
-  python3 - "$SETTINGS" "$MARKETPLACE" "$REPO_DIR" <<PYEOF
-import json, sys, os
+  python3 - "$SETTINGS" "$MARKETPLACE" "$REPO_DIR" "$PLUGIN_SRC" <<'PYEOF'
+import json, os, sys
+from datetime import datetime, timezone
 
 settings_path = sys.argv[1]
 marketplace   = sys.argv[2]
+repo_dir      = sys.argv[3]
+plugin_src    = sys.argv[4]
 
-plugins = [
-  "chip-design-architecture", "chip-design-rtl", "chip-design-verification",
-  "chip-design-formal",       "chip-design-synthesis", "chip-design-dft",
-  "chip-design-sta",          "chip-design-hls",       "chip-design-pd",
-  "chip-design-soc",          "chip-design-compiler",  "chip-design-firmware",
-  "chip-design-fpga",         "chip-design-infrastructure",
-  "chip-design-meta",
-]
+plugin = "chip-design-verification"
+
+with open(os.path.join(plugin_src, ".claude-plugin", "plugin.json")) as f:
+    version = json.load(f)["version"]
 
 cfg = {}
 if os.path.exists(settings_path):
     with open(settings_path) as f:
         cfg = json.load(f)
 
+# Enable the plugin
 enabled = cfg.setdefault("enabledPlugins", {})
-for p in plugins:
-    enabled[f"{p}@{marketplace}"] = True
+enabled[f"{plugin}@{marketplace}"] = True
 
+# Register the local-directory marketplace so 'claude plugin update' works
 mp = cfg.setdefault("extraKnownMarketplaces", {})
 mp[marketplace] = {
-    "source": {"source": "directory", "path": sys.argv[3]}
+    "source": {"source": "directory", "path": repo_dir}
 }
 
 with open(settings_path, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
 
-print(f"  [OK] {len(plugins)} plugins enabled in settings.json")
+# Seed the plugins ledger so the core tools pick it up immediately
+plugins_json = os.path.join(os.path.dirname(settings_path), "plugins", "installed_plugins.json")
+os.makedirs(os.path.dirname(plugins_json), exist_ok=True)
+
+ledger = {}
+if os.path.exists(plugins_json):
+    with open(plugins_json) as f:
+        ledger = json.load(f)
+
+ledger.setdefault("version", 2)
+ledger.setdefault("plugins", {})
+plugin_key = f"{plugin}@{marketplace}"
+now = datetime.now(timezone.utc).isoformat()
+ledger["plugins"][plugin_key] = [{
+    "scope": "user",
+    "installPath": os.path.join(
+        os.path.dirname(settings_path), "plugins", "cache",
+        marketplace, plugin, version
+    ),
+    "version": version,
+    "installedAt": now,
+    "lastUpdated": now,
+}]
+
+with open(plugins_json, "w") as f:
+    json.dump(ledger, f, indent=2)
+    f.write("\n")
+
+# Also register in known_marketplaces
+kmp_path = os.path.join(os.path.dirname(settings_path), "plugins", "known_marketplaces.json")
+os.makedirs(os.path.dirname(kmp_path), exist_ok=True)
+
+known = {}
+if os.path.exists(kmp_path):
+    with open(kmp_path) as f:
+        known = json.load(f)
+
+known[marketplace] = {
+    "source": {"source": "directory", "path": repo_dir},
+    "installLocation": repo_dir,
+    "lastUpdated": now,
+}
+
+with open(kmp_path, "w") as f:
+    json.dump(known, f, indent=2)
+    f.write("\n")
+
+print(f"  [OK] {plugin}@{marketplace} v{version} enabled")
+print(f"  [OK] marketplace '{marketplace}' registered -> {repo_dir}")
 PYEOF
 
-  # Seed the central memory root from the in-repo memory/ seed (idempotent;
-  # copies knowledge.md only if absent, migrates any repo-local runtime data).
   echo ""
-  echo "Seeding central memory root..."
-  python3 "$REPO_DIR/plugins/infrastructure/skills/memory-keeper/memory_root.py" --init || \
-    echo "  [skip] could not seed memory root; run memory_root.py --init manually."
-
-  echo ""
-  echo "Done! Restart Claude Code to activate all 15 plugins."
+  echo "Done! Restart Claude Code and invoke:"
+  echo "  /chip-design-verification:functional-verification"
 
 fi  # end Claude Code block
 
@@ -336,7 +391,7 @@ for skill_path in skill_files:
         f.write(f'---\napplyTo: "{applyto}"\n---\n\n{body}\n')
     print(f'  [OK] .github/instructions/{domain}.instructions.md')
 
-print(f'\nCopilot: {len(skill_files)} instruction files installed.')
+print(f'\nCopilot: {len(skill_files)} instruction file(s) installed.')
 print('Commit .github/ to share domain rules with your team.')
 PYEOF
 
@@ -376,11 +431,13 @@ lines = [
     '',
 ]
 
-skill_files  = sorted(glob.glob(os.path.join(repo_dir, 'plugins', '*', 'skills', '*', 'SKILL.md')))
-agent_files  = {
-    os.path.basename(os.path.dirname(os.path.dirname(p))): p
-    for p in glob.glob(os.path.join(repo_dir, 'plugins', '*', 'agents', '*.md'))
-}
+skill_files = sorted(glob.glob(os.path.join(repo_dir, 'plugins', '*', 'skills', '*', 'SKILL.md')))
+
+agent_files = {}
+for p in sorted(glob.glob(os.path.join(repo_dir, 'plugins', '*', 'agents', '*.md'))):
+    parts = os.path.normpath(p).split(os.sep)
+    domain = parts[parts.index('plugins') + 1]
+    agent_files.setdefault(domain, []).append(p)
 
 for skill_path in skill_files:
     parts = os.path.normpath(skill_path).split(os.sep)
@@ -389,15 +446,16 @@ for skill_path in skill_files:
     lines.append(f'### {domain}')
     lines.append('')
     lines.append(f'@{skill_path}')
-    if domain in agent_files:
-        lines.append(f'@{agent_files[domain]}')
+    for agent_path in agent_files.get(domain, []):
+        lines.append(f'@{agent_path}')
     lines.append('')
 
 with open(out_path, 'w', encoding='utf-8') as f:
     f.write('\n'.join(lines) + '\n')
 
+n_agents = sum(len(v) for v in agent_files.values())
 print(f'  [OK] {out_path}')
-print(f'  ({len(skill_files)} domains, {len(skill_files) + len(agent_files)} @-imports)')
+print(f'  ({len(skill_files)} domains, {len(skill_files) + n_agents} @-imports)')
 PYEOF
 
 fi  # end Gemini block
@@ -425,37 +483,25 @@ is_global  = sys.argv[3] == 'true'
 
 # Mode key / display-name mapping
 mode_display = {
-    'architecture': ('chip-architecture', 'Chip Architecture Evaluation'),
-    'rtl-design':   ('chip-rtl',          'RTL Design (SystemVerilog)'),
     'verification': ('chip-verification', 'Functional Verification (UVM)'),
-    'formal':       ('chip-formal',       'Formal Verification (FPV/LEC)'),
-    'synthesis':    ('chip-synthesis',    'Logic Synthesis'),
-    'dft':          ('chip-dft',          'Design for Test'),
-    'sta':          ('chip-sta',          'Static Timing Analysis'),
-    'hls':          ('chip-hls',          'High-Level Synthesis'),
-    'pd':           ('chip-pd',           'Physical Design'),
-    'soc':          ('chip-soc',          'SoC IP Integration'),
-    'compiler':     ('chip-compiler',     'Compiler Toolchain'),
-    'firmware':     ('chip-firmware',     'Embedded Firmware'),
-    'fpga':         ('chip-fpga',         'FPGA Emulation'),
 }
 
 base = json.load(open(os.path.join(repo_dir, 'ides', 'opencode', 'opencode-base.json')))
 modes = {}
 
-agent_files = sorted(glob.glob(os.path.join(repo_dir, 'plugins', '*', 'agents', '*.md')))
-for agent_path in agent_files:
-    parts = os.path.normpath(agent_path).split(os.sep)
+skill_files = sorted(glob.glob(os.path.join(repo_dir, 'plugins', '*', 'skills', '*', 'SKILL.md')))
+for skill_path in skill_files:
+    parts = os.path.normpath(skill_path).split(os.sep)
     domain = parts[parts.index('plugins') + 1]
 
-    # Extract description from YAML frontmatter
-    content = open(agent_path, encoding='utf-8').read()
-    m = re.search(r'^description:\s*>?\s*\n((?:  .+\n)+)', content, re.MULTILINE)
-    desc = ' '.join(l.strip() for l in m.group(1).strip().splitlines()) if m else domain
+    # Extract single-line description from the SKILL.md YAML frontmatter
+    content = open(skill_path, encoding='utf-8').read()
+    m = re.search(r'^description:\s*(.+)$', content, re.MULTILINE)
+    desc = m.group(1).strip() if m else domain
     desc = desc[:120]
 
     mode_key, mode_name = mode_display.get(domain, (f'chip-{domain}', domain.replace('-', ' ').title()))
-    prompt_path = agent_path if os.path.isabs(agent_path) else os.path.relpath(agent_path, os.path.dirname(target))
+    prompt_path = skill_path if os.path.isabs(skill_path) else os.path.relpath(skill_path, os.path.dirname(target))
     modes[mode_key] = {
         'name':        mode_name,
         'description': desc,
@@ -478,7 +524,7 @@ with open(target, 'w', encoding='utf-8') as f:
     json.dump(out, f, indent=2)
     f.write('\n')
 
-print(f'  [OK] {target} — {len(modes)} modes')
+print(f'  [OK] {target} — {len(modes)} mode(s)')
 print('  Use /mode chip-<domain> in OpenCode to activate a domain.')
 PYEOF
 
@@ -544,3 +590,15 @@ print(f'  ({len(skill_files)} domains inlined)')
 PYEOF
 
 fi  # end Codex block
+
+# ── Done ──────────────────────────────────────────────────────────────────────
+echo ""
+echo "═══════════════════════════════════════════════════════════════════════"
+echo "Installation complete."
+echo ""
+echo "Claude Code:  restart and invoke /chip-design-verification:functional-verification"
+echo "Copilot:      commit .github/ to share domain rules"
+echo "Gemini:       project or global GEMINI.md written"
+echo "OpenCode:     activate a mode with /mode chip-<domain>"
+echo "Codex:        AGENTS.md or ~/.codex/instructions.md written"
+echo "═══════════════════════════════════════════════════════════════════════"

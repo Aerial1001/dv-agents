@@ -1,126 +1,134 @@
 # dv-agents
 
-> Claude Code marketplace plugin — DV verification pipeline.  
-> 4 plugins · 5 skill files · functional verification + SoC integration + EDA infrastructure · fix_request protocol for RTL designer handoff.
+`dv-agents` is a Claude Code plugin for evidence-driven SystemVerilog/UVM
+functional verification. Version 2 is a rewrite around a one-level worker
+topology and a durable workflow state.
 
-Forked from [digital-chip-design-agents](https://github.com/chuanseng-ng/digital-chip-design-agents) v1.3.0 — focused exclusively on design verification.
+## Architecture
 
----
+```text
+                      verification-builder
+                               ^
+                               |
+verification-reviewer <-- main session --> verification-runner
+                               |
+                               v
+                      verification-debugger
+```
 
-## Quick Start
+The functional-verification skill runs in the user's main session. There is no
+orchestrator subagent: this keeps builder, reviewer, runner, and debugger at
+subagent depth one. Workers never invoke one another.
 
-With Node.js (≥18), install everything with one command — no clone, no Python:
+- Main owns `.dv/workflow_state.json`, task dispatch, revisions, gates, retry
+  budgets, routing, and human approvals.
+- Builder is the only writer of persistent verification assets.
+- Reviewer performs read-only static plan/code review and signoff audit.
+- Runner executes in isolated `.dv/runs/` directories and reports mechanical
+  outcomes without root-cause guesses.
+- Debugger performs read-only diagnosis and returns a routed fix request.
+
+Every worker receives a sealed task from main and returns one structured result
+to main. Worker recommendations are advisory; workers never invoke or message
+one another. `dv_flow.py init` creates a content-addressed baseline revision,
+and all later reviews and runs name an exact composite revision and complete
+path inventory.
+
+## Workflow
+
+```text
+V-plan + TB architecture -> plan review
+  -> tool/RTL preflight
+  -> TB foundation + smoke -> code review -> compile/elab/smoke
+  -> P1 small batches: build -> review -> targeted run -> cumulative run
+  -> remaining priority batches
+  -> constrained random -> coverage merge/closure
+  -> frozen full regression -> signoff audit -> human signoff
+```
+
+A test is complete only after static approval and dynamic pass on the same
+artifact revision. A DUT defect becomes a visible `BLOCKED_DUT` item and fix
+request; it is never silently skipped or counted as pass.
+
+The approving plan reviewer returns a machine-readable inventory of priorities,
+directed items, random campaigns, and coverage targets. Main uses that inventory
+for gates. Each runner task invokes its requested command once; environment or
+diagnostic retries are separate immutable tasks. A successful coverage merge
+with an unmet mandatory target is reported as `COVERAGE_GAP`, then routed by
+main to bounded coverage closure.
+
+## Local use
+
+Start Claude Code from the design project root with the plugin directory:
 
 ```bash
-npx dv-agents      # detects your AI agents and installs after a confirm
+cd <design-project-root>
+claude --plugin-dir /home/test/work/dv-agents/plugins/verification
 ```
 
-Then just describe your verification task in natural language:
+Then invoke:
 
-```
-Build a UVM testbench for my FIFO block with full coverage
-Run regression on my AXI DMA controller and report coverage gaps
-Set up Verilator + cocotb for my RTL design
-Integrate these IP blocks into a SoC and run chip-level simulation
+```text
+/chip-design-verification:functional-verification
 ```
 
-Claude automatically loads the correct skill before executing.
+Provide the design root, specification, RTL filelist, every protected RTL source
+root, top module, simulator entry point, and clock/reset facts. The skill
+initializes `.dv/` in the design project and resumes it on later sessions. The
+main session verifies that its working directory equals the sealed
+`project_root` before dispatching workers.
 
-For the install script, selective marketplace install, other AI assistants
-(Copilot / Gemini / OpenCode / Codex), and all flags, see
-**[docs/INSTALL.md](docs/INSTALL.md)**.
+The initialization command protects the specification, filelist, and every RTL
+source root in the baseline revision:
 
----
-
-## Available Plugins
-
-| Plugin Name | Domain | Invoke When You Want To... |
-|-------------|--------|---------------------------|
-| `chip-design-verification` | Functional Verification (UVM) | Build testbench, write tests, close coverage, run regression, report bugs via fix_request |
-| `chip-design-soc` | SoC IP Integration | Qualify IPs, configure bus fabric, run chip-level simulation |
-| `chip-design-infrastructure` | Infrastructure & Memory | Detect EDA tools, deploy wrappers, configure MCP servers, distil domain memory |
-| `chip-design-meta` | Schema Reference | fix_request protocol, failure classification, retry strategy mapping, constraint definitions — **no agent included** |
-
----
-
-## How It Works
-
-Each plugin installs:
-
-1. **A Skill** (`plugins/<domain>/skills/<domain>/SKILL.md`) — domain knowledge Claude reads
-   before executing. Contains stage-by-stage rules, QoR metrics, common fixes, and output
-   requirements.
-
-2. **An Orchestrator Agent** (`plugins/<domain>/agents/<domain>-orchestrator.md`) — a subagent
-   that manages the full multi-stage flow. It sequences stages, enforces pass/fail criteria,
-   applies loop-back rules when a stage fails, and escalates clearly when human input is needed.
-   *(The meta plugin provides schema reference only — no orchestrator agent.)*
-
-Skills are loaded autonomously by Claude when you describe a task. Orchestrators are
-invoked explicitly when you want to run a complete flow end-to-end.
-
----
-
-## Verification Pipeline
-
-```
-[Infrastructure Setup] → [Functional Verification] → [SoC IP Integration]
-                                │
-                    DUT bug found? → write fix_request → escalate to RTL designer
+```bash
+python3 /home/test/work/dv-agents/plugins/verification/scripts/dv_flow.py init \
+  --root "$PWD" \
+  --design-name <name> \
+  --spec <spec-path> \
+  --rtl-filelist <filelist-path> \
+  --rtl-root <rtl-source-file-or-directory> \
+  --top <top-module>
 ```
 
-The verification orchestrator writes structured `fix_request` entries to `design_state.json`
-when bugs are found, with module, signal, waveform path, and expected/observed behavior.
-The RTL designer consumes these entries and applies fixes — no automated RTL dispatch loop
-is included in dv-agents.
+Repeat `--rtl-root` when RTL lives under multiple protected roots.
 
----
+The plugin relies on Claude Code standard discovery:
 
-## Memory System
+- `plugins/verification/agents/*.md`
+- `plugins/verification/skills/*/SKILL.md`
 
-Each domain orchestrator reads from and writes to a two-tier persistent memory store:
+The manifest intentionally does not enumerate individual agent files.
 
-- **`memory/<domain>/knowledge.md`** — distilled summaries (failure patterns, tool flags, PDK
-  quirks) read at session start.
-- **`memory/<domain>/experiences.jsonl`** — append-only run records written after every signoff
-  or escalation.
+## Durable protocol
 
-Distil accumulated records back into `knowledge.md` with the `memory-keeper` skill, track
-QoR metrics across runs with `tools/qor_trends.py`, and search past experiences with
-`tools/experience_search.py`. See **[memory/README.md](memory/README.md)** for full details.
+`plugins/verification/scripts/dv_flow.py` creates immutable task requests,
+validates worker results, hashes artifacts, rejects stale revisions, enforces
+retry limits, records DUT fix requests, and guards final completion.
 
----
+Requests carry `input_revision`, complete `revision_paths`, prior result
+references, explicit scopes, and an expected result path. Builder changes report
+created, modified, and deleted files; all file digests use standard lowercase
+`sha256:<hex>` notation.
 
-## Repo Structure
-
-```
-dv-agents/
-├── .claude-plugin/marketplace.json   ← Marketplace registry (4 plugins)
-├── plugins/                          ← One isolated directory per plugin (skill + orchestrator)
-│   ├── verification/                 ← Functional verification (UVM)
-│   ├── soc/                          ← SoC IP integration
-│   ├── infrastructure/               ← EDA tool detection, wrappers, MCP, memory-keeper
-│   └── meta/                         ← Pipeline orchestration schema reference (skill only)
-├── ides/                             ← IDE-specific config files (Copilot / Gemini / OpenCode / Codex)
-├── memory/                           ← Persistent two-tier per-domain memory
-├── docs/                             ← Install guide, pipeline map, and flow docs
-├── tools/                            ← QoR trends, experience search
-└── .github/workflows/                ← CI (validate.yml) and release (release.yml)
+```bash
+python3 plugins/verification/scripts/dv_flow.py --help
 ```
 
----
+Schemas and reference material live beside the skill in `references/`.
 
-## Contributing
+## Validation
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome for:
-- Improved verification rules or QoR metrics in SKILL.md
-- New loop-back rules in orchestrators
-- New verification-focused domains (e.g., formal verification, performance verification)
+```bash
+python3 scripts/validate_repo.py
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+claude plugin validate --strict plugins/verification
+```
 
-CI validates all files on every PR — the validate workflow must pass before merge.
-
----
+The repository validator checks manifests, standard agent/skill discovery,
+worker frontmatter, the no-nested-agent rule, and cross-schema action
+vocabulary.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT

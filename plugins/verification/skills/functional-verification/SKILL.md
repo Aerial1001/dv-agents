@@ -1,343 +1,337 @@
 ---
 name: functional-verification
-description: >
-  UVM-based functional verification — testbench architecture, test planning,
-  directed and constrained-random stimulus, functional and code coverage closure,
-  formal assist, and regression sign-off. Use when building a UVM testbench,
-  writing tests, analysing coverage, or managing a verification regression.
-version: 1.0.0
-author: chuanseng-ng
-license: MIT
-allowed-tools: Read, Write, Bash
+description: Use this skill when the user asks to plan, build, run, debug, close coverage, or sign off a SystemVerilog or UVM verification environment. It drives the complete DV campaign in the main session and delegates bounded work to the verification builder, reviewer, runner, and debugger agents.
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - AskUserQuestion
+  - Agent(chip-design-verification:verification-builder, chip-design-verification:verification-reviewer, chip-design-verification:verification-runner, chip-design-verification:verification-debugger)
+  - Bash(pwd)
+  - Bash(git rev-parse *)
+  - Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dv_flow.py" *)
 ---
 
-# Skill: Functional Verification (UVM)
+# Functional Verification Orchestration
 
-## Invocation
+你是工作流的调度者，运行在用户的主 session 中。不要创建 orchestrator 子 agent，只
+派发上面列出的四种 worker agent。这样每个 worker 都保持在 subagent depth one，所有
+决策在主 session 中可见。
 
-When this skill is loaded and a user presents a verification task, **do not
-execute stages directly**. Immediately spawn the
-`dv-agents:verification-orchestrator` agent and pass the full
-user request and any available context to it. The orchestrator enforces the stage
-sequence, loop-back rules, and sign-off criteria defined below.
+## Session Start — 先停下来问用户
 
-Use the domain rules in this file only when the orchestrator reads this skill
-mid-flow for stage-specific guidance, or when the user asks a targeted reference
-question rather than requesting a full flow execution.
+**在询问用户想要做什么之前，不要派发任何 worker，也不要用 `init` 初始化状态。**
 
-## Pre-run Context
+1. 检查当前目录下是否存在 `.dv/workflow_state.json`。
+2. **如果存在** — 运行 `validate` 和 `show`，总结当前 phase、revision、work item
+   进度和 open blocker，然后问用户下一步想做什么（resume / 重跑某个 gate /
+   查看某个 task / 重新开始）。
+3. **如果不存在** — 问用户是否要启动一次新的 DV campaign。如果是，收集全部所需
+   信息（project root、design name、spec 路径、RTL filelist、RTL roots、top module、
+   priority order、simulator、clock/reset 信息），确认完毕后再运行 `init`。不要自
+   行假设默认值。
+4. 初始化或恢复完成后，**派发第一个 worker task 之前先征得用户确认**。
 
-Before executing or advising on **any** stage, read the following files if they exist:
+## Operating Model
 
-1. `memory/verification/knowledge.md` — known failure patterns, successful tool flags, PDK/tool quirks.
-   Incorporate its guidance into every stage decision. If absent, proceed without it.
-2. `memory/verification/run_state.md` — current run identity (`run_id`, `design_name`, `tool`,
-   `last_stage`). Use this to resume correctly after interruption. If absent, a new run
-   is starting; the orchestrator will create this file before the first stage.
+采用一层星型拓扑：
 
-This pre-run read applies whether this skill is loaded by a user or called by the
-orchestrator mid-flow. It ensures the fix database is consulted before any diagnosis step.
-
-## Purpose
-Guide the complete UVM functional verification flow from testbench architecture
-through coverage-closed regression sign-off. Produces a verified RTL package
-with documented coverage and a clean regression.
-
----
-
-## Supported EDA Tools
-
-### Open-Source
-- **Verilator** (`verilator`) — fast cycle-accurate simulator; UVM support via verilator+UVM
-- **Icarus Verilog** (`iverilog`) — event-driven simulation for quick testbench checks
-- **cocotb** — Python-based co-simulation framework (`pip install cocotb`)
-- **PyUVM** — UVM implementation in Python for cocotb environments
-- **UVVM** — VHDL verification methodology library
-
-### Proprietary
-- **Synopsys VCS** (`vcs`) — industry-standard SV/UVM simulator
-- **Cadence Xcelium** (`xrun`) — multi-language simulator with coverage engine
-- **Siemens Questa** (`vsim` / `vlog` / `vcom`) — mixed-language simulation with UVM support
-
----
-
-## Stage: tb_architecture
-
-### Domain Rules
-1. Follow UVM 1.2 standard (IEEE 1800.2)
-2. One UVM agent per DUT interface (driver, monitor, sequencer)
-3. Active agents: drive stimulus; passive agents: monitor only
-4. Scoreboard: checks DUT output against reference model output
-5. Reference model: functional model of DUT — SystemVerilog or C++ via DPI
-6. Coverage collector: separate component from scoreboard
-7. Virtual sequencer: coordinates multi-agent stimulus scenarios
-8. All TB parameters via uvm_config_db — no hardcoded values in components
-
-### UVM Hierarchy Template
-```
-uvm_test
-  └─ uvm_env
-       ├─ agent_A (active)   driver + monitor + sequencer
-       ├─ agent_B (passive)  monitor only
-       ├─ scoreboard
-       ├─ coverage_collector
-       └─ virtual_sequencer
+```text
+                         verification-builder
+                                  ^
+                                  |
+verification-reviewer <---- main session ----> verification-runner
+                                  |
+                                  v
+                         verification-debugger
 ```
 
-### QoR Metrics to Evaluate
-- All DUT interfaces covered by an agent
-- Reference model: adequate to check all DUT outputs
-- TB compile: 0 errors
+Worker 之间不互相调用或通信。每个 worker 接收一个不可变的 task request，返回一个
+JSON result。你负责校验并记录该 result，然后再派发下一个 worker。Worker 的
+`recommended_next` 仅供参考，只有你可以决定路由、创建 task、推进 phase。
 
-### Output Required
-- TB architecture diagram
-- UVM component list and hierarchy
-- Interface-to-agent mapping table
+你独自主管以下事项：
 
----
+- `.dv/workflow_state.json`
+- task 创建、phase 推进、重试预算、审批 gate
+- reviewer 发现的 review finding、runner 的运行失败、debugger 的诊断结果和 fix request 的路由
+- 判断某项证据是否满足 gate 条件
 
-## Stage: test_planning
+不要自己写 V-plan、testbench、test、assertion 或 coverage model。不要自己做 code
+review。不要自己去读冗长的仿真 log。把这些有明确边界的工作派发给对应的 worker。
 
-### Domain Rules
-1. Every functional requirement → at least one directed test
-2. Every interface → protocol compliance test
-3. Error/exception cases: explicit directed tests (not left to random)
-4. Corner cases: boundary values, max/min, overflow, underflow
-5. Concurrency: multi-threaded stimulus for pipeline stress
-6. Back-pressure: tests under flow control conditions
-7. Reset: in-operation resets, reset during active transaction
-8. Define covergroups before writing tests
+## 参考文件
 
-### V-Plan Entry Template (per feature)
+以下文件按需阅读，路径相对于本 `SKILL.md`：
+
+- `references/task-contract.md` — 首次派发 task 或处理任何 failure 路由前
+- `references/vplan-template.md` — 创建 V-plan task 前
+- `references/workflow-state.schema.json` — 排查 state 校验问题时
+- `references/task-request.schema.json` 和 `references/task-result.schema.json` — worker 返回格式异常时
+
+## Durable State
+
+确定 project root 后，执行一次性初始化：
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dv_flow.py" init \
+  --root <project-root> \
+  --design-name <name> \
+  --spec <spec-path> \
+  --rtl-filelist <filelist-path> \
+  --rtl-root <rtl-source-file-or-directory> \
+  --top <top-module>
 ```
-feature_id:   F001
-description:  AXI write burst handling
-tests:        [direct_single_write, burst_len_256, narrow_transfer]
-assertions:   [axi_valid_stable, axi_handshake_check]
-covergroups:  [burst_len_cg, burst_type_cg]
-priority:     P0
+
+Repeat `--rtl-root` for every protected RTL source file or directory. Run the
+command from the design project root and confirm `pwd` resolves to
+`<project-root>` before creating or dispatching a task.
+
+If `.dv/workflow_state.json` already exists, run `validate` and resume it. Never
+silently replace an existing run.
+
+All task files live under `.dv/tasks/<task-id>/`. Use the state tool for every
+mutation. Do not hand-edit `workflow_state.json`.
+
+Initialization creates a content-addressed `baseline_revision` over the
+specification, RTL filelist, and every protected RTL root. Use it as
+`input_revision` for the first plan-builder task. There is no revision-less
+dispatch. Builder outputs extend that baseline into composite revisions;
+accepted and frozen revisions always cover every path in their recorded
+`revision_paths`.
+
+## Task Dispatch Protocol
+
+每次派发 worker 遵循以下步骤：
+
+1. 选择稳定的 lineage 名称，如 `plan-review`、`smoke-run`、`VP-T014-debug`。
+2. 用 `new-task` 创建 task。选择合适的 retry kind，以确保持久化和正确的重试预算。
+3. 填写生成的 `request.json`。保持 scope 紧凑：提供准确的 `project_root`、非空的
+   `input_revision`、完整的 `revision_paths`、带类型的 `inputs`、明确的 read/write
+   根路径、可观测的 `acceptance` 条件、有界的 `context`（runner 命令必须包含
+   `timeout_s`）、不可变的 `prior_result_refs`、以及自动生成的
+   `expected_result_path`。不要因为某个 builder 修改了一个 TB 文件就去掉 baseline
+   路径。
+4. 运行 `seal-task`。不要派发 draft 状态或校验不通过的 request。
+5. 用 `run_in_background: false` 派发一个具名 worker。传入绝对路径的 request 文件，
+   提示词为：
+   "Read this task request, perform only its scope, and return one JSON object
+   matching the task-result contract. Do not use Markdown fences."
+6. 将 worker 的 JSON 返回内容原样写入 task 的 `result.json`。
+7. 运行 `record-result`。拒绝 stale revision、缺失 artifact、role 不匹配、格式错误
+   的 result。
+8. 根据记录到的 outcome 进行路由。Worker 无权决定下一 phase，任何 worker 的 result
+   都不得直接传给另一个 worker。
+
+Worker 的执行状态与 DV outcome 是独立的。例如：
+
+```text
+agent_status = COMPLETED
+outcome      = SIMULATION_FAILURE
 ```
 
-### QoR Metrics to Evaluate
-- Requirement coverage: 100% of spec features mapped
-- P0 tests: must pass before random testing begins
-- Estimated test count: reasonable vs schedule
+means the runner completed its job correctly and found a failing simulation.
+Do not retry it as an agent failure.
 
-### Output Required
-- V-plan document
-- Covergroup definitions
-- Assertion list with expected behaviour
+## 工作流程
 
----
+Phase 流转顺序：
 
-## Stage: uvm_tb_build
-
-### Domain Rules — Sequences
-1. Base sequence: minimum valid transaction
-2. Extended sequences: specific scenarios from V-plan
-3. Sequence library: register all sequences for random selection
-4. Never hardcode values — use randomised fields with constraints
-
-### Domain Rules — Drivers
-1. Drive signals cycle-accurate to protocol specification
-2. Handle back-pressure: check ready/valid correctly
-3. Protocol assertion in driver to catch illegal stimulus early
-
-### Domain Rules — Scoreboard
-1. Predict expected output from reference model before DUT output arrives
-2. Report mismatches with full context (stimulus, expected, actual)
-3. Track: total checks, pass, fail, untriggered
-
-### Domain Rules — SVA Assertions
-1. Protocol assertions: in interface bind, not DUT
-2. Functional assertions: in checker or bind module
-3. All assertions: clearly named with descriptive failure message
-
-### QoR Metrics to Evaluate
-- TB compile: 0 errors, 0 warnings
-- Sanity test: passes with known-good RTL
-- All components active in simulation log
-
-### Output Required
-- UVM component source files
-- SVA assertion files (bind-based)
-- Compile script
-
----
-
-## Stage: directed_tests
-
-### Domain Rules
-1. Implement one directed test per V-plan entry — tests must be deterministic
-2. Each test: verify the exact functional requirement it targets (no catch-all tests)
-3. Error/exception paths: explicit stimulus to trigger each one
-4. Corner cases: boundary values, max/min, overflow, underflow — one test each
-5. Reset during active transaction: at least one test per interface
-6. P0 tests must all pass before constrained-random phase begins
-7. DUT bug found during directed test: write a `fix_request` entry to `design_state.fix_requests[]` per the schema in the verification-orchestrator Design State section; terminate with `decision=escalate`. The RTL designer (or external tooling) handles RTL re-invocation — do not loop locally or wait for user confirmation. The dv-agents meta plugin provides the fix_request schema as a reference.
-
-### QoR Metrics to Evaluate
-- All V-plan features covered by at least one directed test
-- P0 directed tests: 100% pass before proceeding
-- 0 UVM FATAL or ERROR during directed test phase
-
-### Output Required
-- Directed test source files (one UVM sequence per feature)
-- Directed test pass/fail report
-- Bug report (if any DUT bugs found)
-
----
-
-## Stage: constrained_random
-
-### Domain Rules
-1. Constraint blocks: randomise all stimulus fields within protocol-legal ranges
-2. Bias constraints: weight toward uncovered coverage bins identified in prior runs
-3. Seeds: use at least 10 distinct seeds before evaluating coverage
-4. Scoreboards active throughout: every transaction checked against reference model
-5. Any UVM FATAL: stop immediately — do not accumulate errors across seeds
-6. Any scoreboard mismatch: classify as DUT bug or testbench bug before continuing
-7. Run until coverage targets are met or max seed budget exhausted
-
-### QoR Metrics to Evaluate
-- Functional coverage: trending toward 100% across seeds
-- No persistent scoreboard mismatches (classify and fix before more seeds)
-- Regression pass rate: 100% (no failing seeds)
-
-### Output Required
-- Coverage report (merged across all seeds run so far)
-- Uncovered bin list for directed test closure
-- Seed log (seed number, pass/fail, coverage achieved)
-
----
-
-## Stage: coverage_analysis
-
-### Coverage Targets
-| Type | Target | Priority |
-|------|--------|----------|
-| Functional (V-plan) | `design_state.constraints.coverage.functional_pct`% (default: 100%) | P0 |
-| Code Line | ≥ `design_state.constraints.coverage.line_pct`% (default: 95%) | P1 |
-| Code Branch | ≥ `design_state.constraints.coverage.branch_pct`% (default: 90%) | P1 |
-| Code Toggle | ≥ `design_state.constraints.coverage.toggle_pct`% (default: 85%) | P2 |
-| FSM State | `design_state.constraints.coverage.fsm_state_pct`% (default: 100%) | P0 |
-| FSM Transition | ≥ `design_state.constraints.coverage.fsm_transition_pct`% (default: 95%) | P0 |
-| Assertion triggered | `design_state.constraints.coverage.assertion_pct`% (default: 100%) | P1 |
-
-### Closure Strategy
-1. Identify uncovered bins after N random seeds
-2. Write targeted directed tests for hard-to-hit bins
-3. Adjust constraints to bias toward uncovered areas
-4. Waive unreachable bins with justification (dead code)
-
-### QoR Metrics to Evaluate
-- Functional coverage: 100% (no unwaived misses)
-- Code coverage: per targets above
-- Waiver file: all entries approved by verification lead
-
-### Output Required
-- Coverage report (merged across all seeds)
-- Uncovered bin list with closure plan
-- Waiver file
-
----
-
-## Stage: formal_assist
-
-### Use Cases for Formal
-1. Protocol compliance: prove handshake never violates
-2. Deadlock freedom: prove no state where valid=1 and ready never comes
-3. Liveness: every request eventually gets a response
-4. One-hot FSM: state encoding never has 0 or >1 bits set
-5. Coverage closure: hit bins unreachable by simulation
-
-### Domain Rules
-1. Write properties in concurrent SVA
-2. Group properties by feature in separate .sva files
-3. Constrain environment with assumptions that match valid stimulus
-4. Run vacuity check: assumption disabled → property should NOT hold
-5. Bound liveness properties (##[1:BOUND])
-
-### QoR Metrics to Evaluate
-- All properties: PROVEN or clearly UNREACHABLE
-- No vacuous proofs
-- Additional coverage bins closed vs simulation baseline
-
-### Output Required
-- SVA property file
-- Formal run report (proven/failed/vacuous per property)
-- CEX waveform descriptions for any failures
-
----
-
-## Stage: regression_signoff
-
-### Regression Tiers
-| Tier | Trigger | Duration | Contents |
-|------|---------|----------|----------|
-| Smoke | Every RTL commit | < 30 min | P0 directed tests |
-| Nightly | Every night | < 8 hr | All directed + 100 random seeds |
-| Weekly | Weekly gate | < 48 hr | Full suite, 1000 seeds |
-| Sign-off | Tape-out gate | Unlimited | Full suite, 10,000 seeds |
-
-### Pass Criteria
-- 0 simulation failures (excluding waived known bugs)
-- 0 UVM FATAL or UVM ERROR messages
-- All coverage targets met (see `coverage_analysis` targets; driven by `design_state.constraints.coverage.*`)
-- Formal: all P0 properties proven
-- All P0/P1 bugs: closed
-
-### Output Required
-- Regression pass/fail report
-- Final merged coverage report
-- Open bug list
-- Sign-off checklist
-
----
-
-## Constraint Validation
-
-See `plugins/meta/skills/pipeline-orchestration/SKILL.md` §Constraints Schema for the authoritative schema and stage-entry validation rule.
-
-**No required keys** for functional verification — all constraints in this domain are optional with schema defaults.
-
-**Optional (schema defaults apply when absent):**
-- `constraints.coverage.functional_pct` (default: 100) — functional/V-plan coverage target %
-- `constraints.coverage.line_pct` (default: 95) — code line coverage target %
-- `constraints.coverage.branch_pct` (default: 90) — code branch coverage target %
-- `constraints.coverage.toggle_pct` (default: 85) — toggle coverage target %
-- `constraints.coverage.fsm_state_pct` (default: 100) — FSM state coverage target %
-- `constraints.coverage.fsm_transition_pct` (default: 95) — FSM transition coverage target %
-- `constraints.coverage.assertion_pct` (default: 100) — assertion trigger coverage target %
-
-Tag `constraint_ref` in history entries when evaluating QoR against these values (e.g. `"coverage.functional_pct"`).
-
----
-
-## Memory
-
-### Write on stage completion
-After each stage completes (regardless of whether an orchestrator session is active),
-write or overwrite one JSON record in `memory/verification/experiences.jsonl` keyed by
-`run_id`. This ensures data is persisted even if the flow is interrupted or called
-without full orchestrator context.
-
-Use `run_id` = `verification_<YYYYMMDD>_<HHMMSS>` (set once at flow start; reuse on each
-stage update). Set `signoff_achieved: false` until the final sign-off stage completes.
-### Run state (write before first stage, update after each stage)
-Write `memory/verification/run_state.md` as the **first action** before launching any tool:
-```markdown
-run_id:      verification_<YYYYMMDD>_<HHMMSS>
-design_name: <design>
-tool:        <primary tool>
-start_time:  <ISO-8601>
-last_stage:  <first stage name>
+```text
+INIT -> PLAN -> PREFLIGHT -> SMOKE
 ```
-Update `last_stage` after each stage completes. This file lets wakeup-loop prompts
-and resumed sessions identify the correct run without relying on in-memory state.
-Create the file and parent directories if they do not exist.
 
-### Optional: claude-mem index
-If `mcp__plugin_ecc_memory__add_observations` is available in this session, emit each
-applied fix as an observation to entity `chip-design-verification-fixes` after writing to
-`experiences.jsonl`. Skip silently if the tool is absent — JSONL is the canonical record.
+### 0. 验证计划
+
+向 `verification-builder` 派发 `WRITE_VPLAN`（基于 `baseline_revision`）。Builder
+将编写结构化的 Markdown V-plan，包含稳定的 requirement/feature/test ID、TB 架构、
+checker/reference-model 策略、assertion、coverage、依赖关系、优先级语义和验收标准。
+
+向 `verification-reviewer` 派发 `REVIEW_VPLAN`（基于 builder 产出的 revision）。
+
+- `APPROVED`：记录审批通过，继续推进。
+- `CHANGES_REQUIRED`：仅将 blocking finding ID 发给 builder 修复，然后重新 review。
+- `BLOCKED`：暂停，等待缺失的 specification 或用户输入。
+
+审批通过后，提取 reviewer 返回的结构化 `plan_inventory`（包含 priority order、
+directed work items、random campaigns、coverage items）。后续通过这份 inventory 来
+创建和评估 work item，不要自己去解析 Markdown 来判断 gate 状态。
+
+Builder 编写的 Markdown 文档状态保持 `PROPOSED`。审批和冻结以 reviewer result 和
+durable task/approval ledger 为准，worker 不得通过修改文档状态来自我批准。
+
+只有 `BLOCKER` 和 `MAJOR` finding 才会阻塞 gate。Review 轮数有上限。当 V-plan 变更
+了需求、优先级语义或 checker 行为预期时，需要征求用户 approval。
+
+### 1. 工具和 RTL Preflight
+
+V-plan review 通过且 inventory 提取完毕后，向 `verification-runner` 派发 `PREFLIGHT`
+（基于审批通过的 plan revision）。仅确认 TB 还不存在时即可验证的事实：受保护的 RTL
+roots 和 RTL filelist 存在、DUT top 可访问、clock/reset 信息可获取、请求的
+simulator/tool 可发现、license 和环境变量可用、命令入口可用、隔离的 run 目录可写。
+
+此 gate 不要求 TB filelist、TB 源码或编译通过。Ticket 仍需指定一个命令、工具、工
+作目录和正的 `timeout_s`，其目的是验证工具/RTL 就绪，而非仿真。
+
+Gate：所需 RTL/工具输入齐全，执行路径可用。环境重试有上限。持久性环境问题应标记为
+`BLOCKED`，这不是仿真 bug。
+
+### 2. TB Foundation 和 Smoke
+
+向 builder 派发 `BUILD_SMOKE_FOUNDATION`。Foundation 必须证明一条端到端路径，不仅
+仅是能编译：
+
+- reset 和 clock 行为
+- 每个关键接口上至少一笔合法 transaction
+- 活跃的 sequencer、driver、monitor 路径
+- monitor 中的 transaction reconstruction
+- reference-model 或 scoreboard 比对
+- assertion 和 coverage collector 实例化
+- watchdog 和干净的 objection 终止
+
+先做 code review，再派发 runner 做 compile/elaboration 和 smoke test。Smoke 是硬
+gate。在 review 过的 revision 通过编译、elaboration 和 smoke 之前，不得开始 feature
+实现。
+
+### 3. 优先级 Feature 队列
+
+V-plan 定义了 priority order，默认 `P1, P2, P3`。除非 plan 明确声明，否则不要假设
+`P0` 或 `P1` 是最高优先级。
+
+每次处理一个 feature 或一个小批量：
+
+```text
+builder -> reviewer -> targeted runner -> cumulative priority regression
+```
+
+A source file being written is not completion. A work item is complete only
+when its exact revision is statically approved and its targeted test passes.
+After each accepted batch, rerun smoke and the already accepted tests for the
+current priority. Do not move to a lower priority while a higher-priority item
+has an unwaived failure or unresolved blocking issue.
+
+### 4. 随机约束和 Coverage Closure
+
+所有 planned directed feature 通过后，按 V-plan 定义的 seed budget 派发 random
+test。Runner 记录每个 seed 并 merge coverage。
+
+遇到 coverage gap 时，向 builder 派发 `COVERAGE_CLOSURE`（附带 uncovered bins 和已
+批准的 exclusion）。任何 constraint、test、assertion 或 covergroup 变更都要先
+review，然后重新跑 targeted seed set 和 cumulative regression。
+
+Coverage exclusion 和 waiver 需要有明确的 evidence 和用户 approval。
+
+### 5. 冻结 Regression 和 Signoff
+
+冻结 V-plan、TB 和 RTL revision。对冻结版本派发完整 regression。然后派发 reviewer
+做 `SIGNOFF_AUDIT`，检查 traceability、results、coverage、bug 状态、waiver、seed、
+command 和 artifact 路径。
+
+Signoff 必须有用户明确 approval。只有 approval 之后才能推进到 `COMPLETE`。
+
+## 失败路由
+
+Runner outcome 按如下方式路由：
+
+| Runner outcome | Action |
+|---|---|
+| `PASS` | Evaluate the current gate. |
+| `ENVIRONMENT_ERROR` | Dispatch a bounded runner retry. |
+| `COMPILE_ERROR` or `ELABORATION_ERROR` | Dispatch the debugger with the first diagnostic and source context. |
+| `SIMULATION_FAILURE` or `TIMEOUT` | Dispatch the debugger with test, seed, log, wave, and first failure signature. |
+| `COVERAGE_GAP` | Dispatch a bounded `COVERAGE_CLOSURE` builder task for the reported unmet targets. |
+| `BLOCKED` | Record the blocker and request the missing input. |
+
+Debugger classification 按如下方式路由：
+
+| Classification | Action |
+|---|---|
+| `TB_BUG` or `TEST_BUG` | Builder fix -> reviewer -> rerun the same test and seed -> affected regression. |
+| `DUT_BUG` | Write a fix request, mark affected items `BLOCKED_DUT`, and continue only independent work. |
+| `ENVIRONMENT` or `TOOLCHAIN` | Runner retry within the environment budget. |
+| `SPEC_GAP` | Enter a human approval gate; do not invent behavior. |
+| `UNKNOWN` | Allow one evidence-collection round, then enter a human gate. |
+
+A confirmed DUT defect is neither skipped, passed, nor waived into clean
+signoff. Main records a fix request, an external RTL owner changes only protected
+RTL, and the updated revision must rerun the debugger's exact test/seed plus the
+affected cumulative regression before the fix request can close. The prior TB
+review remains authoritative because no verification asset changed.
+
+## Work-item 和 DUT-fix 路由
+
+Plan 通过后，用 `set-item` 更新每个 work item 的状态，不要手动编辑 ledger。正常路
+径为：
+
+```text
+PENDING -> BUILDING -> AWAITING_REVIEW -> READY_TO_RUN
+        -> RUNNING -> PASSED
+```
+
+Review findings route `AWAITING_REVIEW -> CHANGES_REQUIRED -> FIXING ->
+AWAITING_REVIEW`. Run failures route `RUNNING -> DEBUGGING`; a TB/test diagnosis
+then routes `DEBUGGING -> FIXING`, while a confirmed DUT diagnosis routes to
+`BLOCKED_DUT`. `READY_TO_RUN` must cite the approved review task with
+`--last-task-id`; `PASSED` must cite the passing runner task. `WAIVED` requires a
+recorded `WORK_ITEM:<id>` human approval and cannot close an unresolved DUT fix
+request.
+
+Entering `AWAITING_REVIEW` requires `--last-task-id` naming the completed
+builder task that produced the item's current revision; the ledger stores it as
+`builder_task_id`. The subsequent reviewer task must name that exact builder as
+its parent. Main rejects a review from another builder lineage even if paths or
+IDs happen to overlap.
+
+For a confirmed `DUT_BUG`, use this auditable route:
+
+```text
+add-fix-request
+  -> external RTL owner updates a protected --rtl-root
+  -> accept-rtl-update --expected-revision <old> --external-ref <change-id>
+  -> rerun the debugger's exact test/seed on the new revision
+  -> run the affected cumulative regression
+  -> set-item ... --status PASSED --last-task-id <passing-run-task>
+  -> resolve-fix-request --verification-task-id <passing-run-task>
+```
+
+`accept-rtl-update` is the only non-builder path that can register a new
+composite revision. It rejects stale expected revisions and any simultaneous
+non-RTL drift, clears a frozen revision, and marks the fix
+`RTL_UPDATED_PENDING_VERIFY`. `resolve-fix-request` requires all affected items
+to pass on that exact new RTL revision; phase advancement additionally requires
+the affected cumulative regression.
+
+## 重试限制
+
+- Review：每个 lineage 最多三轮。
+- Environment：每个 command/test 组合最多三次。
+- TB/test fix：每个 failure signature 最多三次 builder fix。
+- Unknown diagnosis：初始分析 + 一次 evidence 收集。
+- Worker 格式/内部错误：最多三次 dispatch。
+
+每次重试都创建一个新的不可变 task，不要覆盖旧的 request 或 result。重新 spawn agent
+不会重置预算。达到上限后，推进到 `BLOCKED` 或 `WAITING_HUMAN`。
+
+## 完成条件
+
+声明完成前，运行：
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dv_flow.py" validate --root <project-root>
+```
+
+Completion requires all of the following on one frozen revision:
+
+- V-plan review approved and traceability complete
+- smoke and required priority items passed
+- random seed budget completed
+- required coverage targets met or approved waivers recorded
+- full regression passed
+- no open blocking TB issue or required-priority DUT bug
+- signoff audit approved
+- human signoff recorded
+
+每个 gate 通过后简要汇报进度：当前 phase、accepted revision、剩余 work item、
+blocker 和下一步 dispatch。

@@ -1,45 +1,19 @@
 {
   "name": "dv-agents",
   "owner": {
-    "name": "chuanseng-ng",
-    "github": "chuanseng-ng"
+    "name": "dv-agents contributors"
   },
   "metadata": {
-    "description": "DV verification pipeline — functional verification, SoC IP integration, EDA infrastructure, with fix_request protocol for RTL designer handoff. Forked from digital-chip-design-agents v1.3.0.",
-    "version": "1.0.0"
+    "description": "Evidence-driven functional verification agents for SystemVerilog and UVM",
+    "version": "2.0.0"
   },
   "plugins": [
     {
       "name": "chip-design-verification",
-      "description": "UVM testbench, test planning, constrained random, coverage closure, regression, and fix_request writing for DUT bugs",
+      "description": "A stateful DV workflow with builder, reviewer, runner, and debugger workers",
       "source": "./plugins/verification",
-      "strict": true,
-      "skills": ["./skills/functional-verification"],
-      "agents": ["./agents/verification-orchestrator.md"]
-    },
-    {
-      "name": "chip-design-soc",
-      "description": "SoC IP integration — procurement, bus fabric, chip-level simulation sign-off",
-      "source": "./plugins/soc",
-      "strict": true,
-      "skills": ["./skills/soc-integration"],
-      "agents": ["./agents/soc-integration-orchestrator.md"]
-    },
-    {
-      "name": "chip-design-infrastructure",
-      "description": "EDA tool detection, output-filtering shell wrappers, MCP server config templates, and memory distillation for verification and SoC domains",
-      "source": "./plugins/infrastructure",
-      "strict": true,
-      "skills": ["./skills/infrastructure", "./skills/memory-keeper"],
-      "agents": ["./agents/infrastructure-orchestrator.md"]
-    },
-    {
-      "name": "chip-design-meta",
-      "description": "Pipeline orchestration schema reference — fix_request protocol, failure classification, retry strategy mapping, constraints, and checkpoint definitions. No agent included in dv-agents; fix_requests are consumed by human RTL designers.",
-      "source": "./plugins/meta",
-      "strict": true,
-      "skills": ["./skills/pipeline-orchestration"],
-      "agents": []
+      "strict": true
     }
   ]
 }
+

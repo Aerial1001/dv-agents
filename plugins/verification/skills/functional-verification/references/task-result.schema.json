@@ -1,0 +1,1137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dv-agents:schema:task-result:1.0",
+  "title": "DV worker task result",
+  "description": "A bounded, evidence-bearing result returned by one verification worker to the main orchestration agent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "run_id",
+    "role",
+    "action",
+    "attempt",
+    "agent_status",
+    "outcome",
+    "input_revision",
+    "summary",
+    "artifacts",
+    "evidence",
+    "issues",
+    "payload",
+    "recommended_next"
+  ],
+  "properties": {
+    "schema_version": {"const": "dv-result/1.0"},
+    "task_id": {"$ref": "#/$defs/identifier"},
+    "run_id": {"$ref": "#/$defs/identifier"},
+    "role": {"$ref": "#/$defs/role"},
+    "action": {"$ref": "#/$defs/action"},
+    "attempt": {"type": "integer", "minimum": 1},
+    "agent_status": {"enum": ["COMPLETED", "BLOCKED", "FAILED"]},
+    "outcome": {"$ref": "#/$defs/outcome"},
+    "input_revision": {"$ref": "#/$defs/revision"},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "artifacts": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/artifact"}
+    },
+    "evidence": {
+      "type": "array",
+      "items": {"type": "object", "minProperties": 1}
+    },
+    "issues": {
+      "type": "array",
+      "items": {"type": "object", "minProperties": 1}
+    },
+    "payload": {"type": "object"},
+    "recommended_next": {
+      "oneOf": [{"type": "null"}, {"$ref": "#/$defs/recommendedNext"}]
+    },
+    "output_revision": {
+      "$ref": "#/$defs/nullableRevision",
+      "description": "Added by dv_flow.py after worker validation; workers omit this field."
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"role": {"const": "builder"}}, "required": ["role"]},
+      "then": {
+        "properties": {
+          "action": {"$ref": "#/$defs/builderAction"},
+          "issues": {"items": {"$ref": "#/$defs/builderIssue"}},
+          "outcome": {
+            "enum": ["READY_FOR_REVIEW", "NO_CHANGE", "BLOCKED", "INTERNAL_ERROR"]
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"role": {"const": "reviewer"}}, "required": ["role"]},
+      "then": {
+        "properties": {
+          "action": {"$ref": "#/$defs/reviewerAction"},
+          "issues": {"items": {"$ref": "#/$defs/reviewerIssue"}},
+          "outcome": {
+            "enum": ["APPROVED", "CHANGES_REQUIRED", "BLOCKED", "INTERNAL_ERROR"]
+          },
+          "artifacts": {"maxItems": 0}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"role": {"const": "runner"}}, "required": ["role"]},
+      "then": {
+        "properties": {
+          "action": {"$ref": "#/$defs/runnerAction"},
+          "issues": {"items": {"$ref": "#/$defs/runnerIssue"}},
+          "outcome": {
+            "enum": [
+              "PASS",
+              "COVERAGE_GAP",
+              "ENVIRONMENT_ERROR",
+              "COMPILE_ERROR",
+              "ELABORATION_ERROR",
+              "SIMULATION_FAILURE",
+              "TIMEOUT",
+              "BLOCKED",
+              "INTERNAL_ERROR"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"role": {"const": "debugger"}}, "required": ["role"]},
+      "then": {
+        "properties": {
+          "action": {"$ref": "#/$defs/debuggerAction"},
+          "issues": {"maxItems": 0},
+          "outcome": {
+            "enum": ["DIAGNOSED", "NEEDS_MORE_EVIDENCE", "BLOCKED", "INTERNAL_ERROR"]
+          },
+          "artifacts": {"maxItems": 0}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"agent_status": {"const": "BLOCKED"}},
+        "required": ["agent_status"]
+      },
+      "then": {"properties": {"outcome": {"const": "BLOCKED"}}}
+    },
+    {
+      "if": {
+        "properties": {"agent_status": {"const": "FAILED"}},
+        "required": ["agent_status"]
+      },
+      "then": {"properties": {"outcome": {"const": "INTERNAL_ERROR"}}}
+    },
+    {
+      "if": {
+        "properties": {"agent_status": {"const": "COMPLETED"}},
+        "required": ["agent_status"]
+      },
+      "then": {
+        "properties": {
+          "outcome": {"not": {"enum": ["BLOCKED", "INTERNAL_ERROR"]}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "builder"},
+          "agent_status": {"const": "COMPLETED"},
+          "outcome": {"const": "READY_FOR_REVIEW"}
+        },
+        "required": ["role", "agent_status", "outcome"]
+      },
+      "then": {
+        "properties": {
+          "evidence": {"items": {"$ref": "#/$defs/builderEvidence"}},
+          "issues": {"items": {"$ref": "#/$defs/builderIssue"}},
+          "payload": {"$ref": "#/$defs/builderPayload"}
+        },
+        "anyOf": [
+          {"properties": {"artifacts": {"minItems": 1}}},
+          {
+            "properties": {
+              "payload": {
+                "properties": {
+                  "change_set": {
+                    "properties": {"files_deleted": {"minItems": 1}}
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "builder"},
+          "agent_status": {"const": "COMPLETED"},
+          "outcome": {"const": "NO_CHANGE"}
+        },
+        "required": ["role", "agent_status", "outcome"]
+      },
+      "then": {
+        "properties": {
+          "input_revision": {"$ref": "#/$defs/revision"},
+          "artifacts": {"maxItems": 0}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "reviewer"},
+          "agent_status": {"const": "COMPLETED"}
+        },
+        "required": ["role", "agent_status"]
+      },
+      "then": {
+        "properties": {
+          "evidence": {"minItems": 1, "items": {"$ref": "#/$defs/indexedEvidence"}},
+          "issues": {"items": {"$ref": "#/$defs/reviewerIssue"}},
+          "payload": {"$ref": "#/$defs/reviewerPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "reviewer"},
+          "agent_status": {"const": "COMPLETED"},
+          "outcome": {"const": "APPROVED"}
+        },
+        "required": ["role", "agent_status", "outcome"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {"gate": {"properties": {"blocking_count": {"const": 0}}}}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "reviewer"},
+          "agent_status": {"const": "COMPLETED"},
+          "outcome": {"const": "CHANGES_REQUIRED"}
+        },
+        "required": ["role", "agent_status", "outcome"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {"gate": {"properties": {"blocking_count": {"minimum": 1}}}}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "reviewer"},
+          "agent_status": {"const": "COMPLETED"},
+          "action": {"const": "REVIEW_VPLAN"},
+          "outcome": {"const": "APPROVED"}
+        },
+        "required": ["role", "agent_status", "action", "outcome"]
+      },
+      "then": {
+        "properties": {
+          "payload": {"properties": {"plan_inventory": {"$ref": "#/$defs/planInventory"}}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "reviewer"},
+          "agent_status": {"const": "COMPLETED"}
+        },
+        "required": ["role", "agent_status"]
+      },
+      "then": {
+        "if": {
+          "properties": {
+            "action": {"const": "REVIEW_VPLAN"},
+            "outcome": {"const": "APPROVED"}
+          },
+          "required": ["action", "outcome"]
+        },
+        "else": {
+          "properties": {
+            "payload": {"properties": {"plan_inventory": {"type": "null"}}}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "reviewer"},
+          "agent_status": {"const": "COMPLETED"},
+          "action": {"const": "SIGNOFF_AUDIT"}
+        },
+        "required": ["role", "agent_status", "action"]
+      },
+      "then": {
+        "properties": {
+          "payload": {"properties": {"signoff_audit": {"$ref": "#/$defs/signoffAudit"}}}
+        }
+      },
+      "else": {
+        "if": {
+          "properties": {
+            "role": {"const": "reviewer"},
+            "agent_status": {"const": "COMPLETED"}
+          },
+          "required": ["role", "agent_status"]
+        },
+        "then": {
+          "properties": {
+            "payload": {"properties": {"signoff_audit": {"type": "null"}}}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "reviewer"},
+          "agent_status": {"const": "COMPLETED"},
+          "action": {"const": "SIGNOFF_AUDIT"},
+          "outcome": {"const": "APPROVED"}
+        },
+        "required": ["role", "agent_status", "action", "outcome"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "signoff_audit": {
+                "properties": {
+                  "revision_consistent": {"const": true},
+                  "coverage_targets_met": {"const": true},
+                  "open_blockers": {"maxItems": 0},
+                  "open_fix_requests": {"maxItems": 0}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"}
+        },
+        "required": ["role", "agent_status"]
+      },
+      "then": {
+        "properties": {
+          "artifacts": {"minItems": 1},
+          "evidence": {"minItems": 1, "items": {"$ref": "#/$defs/indexedEvidence"}},
+          "issues": {"items": {"$ref": "#/$defs/runnerIssue"}},
+          "payload": {"$ref": "#/$defs/runnerPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "action": {"const": "PREFLIGHT"}
+        },
+        "required": ["role", "agent_status", "action"]
+      },
+      "then": {
+        "properties": {"payload": {"properties": {"run": {"properties": {"phase": {"const": "PREFLIGHT"}}}}}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "action": {"const": "COMPILE_ELAB"}
+        },
+        "required": ["role", "agent_status", "action"]
+      },
+      "then": {
+        "properties": {
+          "payload": {"properties": {"run": {"properties": {"phase": {"enum": ["COMPILE", "ELABORATION"]}}}}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "action": {"const": "COMPILE_ELAB"},
+          "outcome": {"const": "PASS"}
+        },
+        "required": ["role", "agent_status", "action", "outcome"]
+      },
+      "then": {
+        "properties": {
+          "payload": {"properties": {"run": {"properties": {"phase": {"const": "ELABORATION"}}}}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "action": {"const": "RUN_CASE"}
+        },
+        "required": ["role", "agent_status", "action"]
+      },
+      "then": {
+        "properties": {"payload": {"properties": {"run": {"properties": {"phase": {"const": "SIMULATION"}}}}}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "action": {"const": "RUN_REGRESSION"}
+        },
+        "required": ["role", "agent_status", "action"]
+      },
+      "then": {
+        "properties": {"payload": {"properties": {"run": {"properties": {"phase": {"const": "REGRESSION"}}}}}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "action": {"const": "MERGE_COVERAGE"}
+        },
+        "required": ["role", "agent_status", "action"]
+      },
+      "then": {
+        "properties": {"payload": {"properties": {"run": {"properties": {"phase": {"const": "COVERAGE_MERGE"}}}}}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "outcome": {"const": "PASS"}
+        },
+        "required": ["role", "agent_status", "outcome"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "run": {"properties": {"exit_code": {"const": 0}}},
+              "counts": {
+                "properties": {
+                  "uvm_fatal": {"const": 0},
+                  "uvm_error": {"const": 0},
+                  "assertion_failures": {"const": 0},
+                  "scoreboard_mismatches": {"const": 0}
+                }
+              },
+              "failure": {
+                "properties": {
+                  "signature": {"type": "null"},
+                  "first_time": {"type": "null"},
+                  "log_excerpt_ref": {"type": "null"}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "outcome": {"const": "PASS"},
+          "action": {"not": {"const": "PREFLIGHT"}}
+        },
+        "required": ["role", "agent_status", "outcome", "action"]
+      },
+      "then": {"properties": {"input_revision": {"$ref": "#/$defs/revision"}}}
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "outcome": {"const": "PASS"},
+          "action": {"const": "RUN_REGRESSION"}
+        },
+        "required": ["role", "agent_status", "outcome", "action"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "case_results": {
+                "minItems": 1,
+                "items": {
+                  "allOf": [
+                    {"$ref": "#/$defs/caseResult"},
+                    {"properties": {"outcome": {"const": "PASS"}}}
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "outcome": {"const": "PASS"},
+          "action": {"const": "MERGE_COVERAGE"}
+        },
+        "required": ["role", "agent_status", "outcome", "action"]
+      },
+      "then": {
+        "properties": {
+          "artifacts": {"contains": {"properties": {"kind": {"const": "coverage"}}, "required": ["kind"]}},
+          "payload": {
+            "properties": {
+              "coverage_summary": {
+                "allOf": [
+                  {"$ref": "#/$defs/coverageSummary"},
+                  {"properties": {"targets_met": {"const": true}}}
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "outcome": {"const": "COVERAGE_GAP"}
+        },
+        "required": ["role", "agent_status", "outcome"]
+      },
+      "then": {
+        "properties": {
+          "action": {"const": "MERGE_COVERAGE"},
+          "payload": {
+            "properties": {
+              "coverage_summary": {
+                "allOf": [
+                  {"$ref": "#/$defs/coverageSummary"},
+                  {"properties": {"targets_met": {"const": false}}}
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "action": {"not": {"const": "MERGE_COVERAGE"}}
+        },
+        "required": ["role", "agent_status", "action"]
+      },
+      "then": {
+        "properties": {"payload": {"properties": {"coverage_summary": {"type": "null"}}}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "outcome": {
+            "enum": [
+              "ENVIRONMENT_ERROR",
+              "COMPILE_ERROR",
+              "ELABORATION_ERROR",
+              "SIMULATION_FAILURE",
+              "TIMEOUT"
+            ]
+          }
+        },
+        "required": ["role", "agent_status", "outcome"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "failure": {"properties": {"signature": {"type": "string", "minLength": 1}}}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "debugger"},
+          "agent_status": {"const": "COMPLETED"}
+        },
+        "required": ["role", "agent_status"]
+      },
+      "then": {
+        "properties": {
+          "evidence": {"minItems": 1, "items": {"$ref": "#/$defs/indexedEvidence"}},
+          "issues": {"maxItems": 0},
+          "payload": {"$ref": "#/$defs/debuggerPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {"const": "debugger"},
+          "agent_status": {"const": "COMPLETED"},
+          "outcome": {"const": "NEEDS_MORE_EVIDENCE"}
+        },
+        "required": ["role", "agent_status", "outcome"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "rerun": {"properties": {"extra_diagnostics": {"minItems": 1}}}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"role": {"const": "debugger"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"classification": {"const": "TB_BUG"}}, "required": ["classification"]}},
+        "required": ["role", "agent_status", "payload"]
+      },
+      "then": {"properties": {"payload": {"properties": {"route_to": {"const": "BUILDER"}}}}}
+    },
+    {
+      "if": {
+        "properties": {"role": {"const": "debugger"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"classification": {"const": "TEST_BUG"}}, "required": ["classification"]}},
+        "required": ["role", "agent_status", "payload"]
+      },
+      "then": {"properties": {"payload": {"properties": {"route_to": {"const": "BUILDER"}}}}}
+    },
+    {
+      "if": {
+        "properties": {"role": {"const": "debugger"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"classification": {"const": "DUT_BUG"}}, "required": ["classification"]}},
+        "required": ["role", "agent_status", "payload"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "route_to": {"const": "RTL_OWNER"},
+              "confidence": {"enum": ["HIGH", "MEDIUM"]}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"role": {"const": "debugger"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"classification": {"const": "SPEC_GAP"}}, "required": ["classification"]}},
+        "required": ["role", "agent_status", "payload"]
+      },
+      "then": {"properties": {"payload": {"properties": {"route_to": {"const": "HUMAN"}}}}}
+    },
+    {
+      "if": {
+        "properties": {"role": {"const": "debugger"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"classification": {"enum": ["ENVIRONMENT", "TOOLCHAIN"]}}, "required": ["classification"]}},
+        "required": ["role", "agent_status", "payload"]
+      },
+      "then": {"properties": {"payload": {"properties": {"route_to": {"const": "RUNNER"}}}}}
+    },
+    {
+      "if": {
+        "properties": {"role": {"const": "debugger"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"classification": {"const": "UNKNOWN"}}, "required": ["classification"]}},
+        "required": ["role", "agent_status", "payload"]
+      },
+      "then": {"properties": {"payload": {"properties": {"route_to": {"enum": ["RUNNER", "HUMAN"]}}}}}
+    }
+  ],
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$"},
+    "path": {"type": "string", "minLength": 1, "pattern": "^[^\\u0000]+$"},
+    "revision": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "nullableRevision": {"oneOf": [{"$ref": "#/$defs/revision"}, {"type": "null"}]},
+    "nullableString": {"oneOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+    "nullableIdentifier": {"oneOf": [{"$ref": "#/$defs/identifier"}, {"type": "null"}]},
+    "identifierList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/identifier"}
+    },
+    "stringList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "pathList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/path"}
+    },
+    "role": {"enum": ["builder", "reviewer", "runner", "debugger"]},
+    "builderAction": {
+      "enum": ["WRITE_VPLAN", "BUILD_SMOKE_FOUNDATION", "IMPLEMENT_FEATURE_BATCH", "APPLY_REVIEW_FIX", "APPLY_DEBUG_FIX", "COVERAGE_CLOSURE"]
+    },
+    "reviewerAction": {"enum": ["REVIEW_VPLAN", "REVIEW_TB", "REVIEW_FIX", "SIGNOFF_AUDIT"]},
+    "runnerAction": {"enum": ["PREFLIGHT", "COMPILE_ELAB", "RUN_CASE", "RUN_REGRESSION", "MERGE_COVERAGE"]},
+    "debuggerAction": {"enum": ["DIAGNOSE_FAILURE", "REDIAGNOSE_WITH_EVIDENCE"]},
+    "action": {
+      "enum": [
+        "WRITE_VPLAN",
+        "BUILD_SMOKE_FOUNDATION",
+        "IMPLEMENT_FEATURE_BATCH",
+        "APPLY_REVIEW_FIX",
+        "APPLY_DEBUG_FIX",
+        "COVERAGE_CLOSURE",
+        "REVIEW_VPLAN",
+        "REVIEW_TB",
+        "REVIEW_FIX",
+        "SIGNOFF_AUDIT",
+        "PREFLIGHT",
+        "COMPILE_ELAB",
+        "RUN_CASE",
+        "RUN_REGRESSION",
+        "MERGE_COVERAGE",
+        "DIAGNOSE_FAILURE",
+        "REDIAGNOSE_WITH_EVIDENCE"
+      ]
+    },
+    "outcome": {
+      "enum": [
+        "READY_FOR_REVIEW",
+        "NO_CHANGE",
+        "APPROVED",
+        "CHANGES_REQUIRED",
+        "PASS",
+        "COVERAGE_GAP",
+        "ENVIRONMENT_ERROR",
+        "COMPILE_ERROR",
+        "ELABORATION_ERROR",
+        "SIMULATION_FAILURE",
+        "TIMEOUT",
+        "DIAGNOSED",
+        "NEEDS_MORE_EVIDENCE",
+        "BLOCKED",
+        "INTERNAL_ERROR"
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "sha256"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "path": {"$ref": "#/$defs/path"},
+        "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "builderEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "line_or_time", "observation"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "path": {"$ref": "#/$defs/path"},
+        "line_or_time": {"type": "string", "minLength": 1},
+        "observation": {"type": "string", "minLength": 1}
+      }
+    },
+    "indexedEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "line_or_time", "observation"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "path": {"$ref": "#/$defs/path"},
+        "line_or_time": {"type": "string", "minLength": 1},
+        "observation": {"type": "string", "minLength": 1}
+      }
+    },
+    "builderIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "severity", "summary", "paths", "related_ids"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "severity": {"enum": ["BLOCKER", "WARNING"]},
+        "summary": {"type": "string", "minLength": 1},
+        "paths": {"$ref": "#/$defs/pathList"},
+        "related_ids": {"$ref": "#/$defs/identifierList"}
+      }
+    },
+    "reviewerIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "severity", "category", "path", "line", "related_ids", "evidence_ids", "impact", "required_change", "disposition"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "severity": {"enum": ["BLOCKER", "MAJOR", "MINOR", "NOTE"]},
+        "category": {"enum": ["plan", "correctness", "uvm", "protocol", "checker", "assertion", "coverage", "build", "signoff"]},
+        "path": {"$ref": "#/$defs/path"},
+        "line": {"type": "integer", "minimum": 0},
+        "related_ids": {"$ref": "#/$defs/identifierList"},
+        "evidence_ids": {"$ref": "#/$defs/identifierList"},
+        "impact": {"type": "string", "minLength": 1},
+        "required_change": {"type": "string", "minLength": 1},
+        "disposition": {"enum": ["OPEN", "RESOLVED", "STILL_OPEN"]}
+      }
+    },
+    "runnerIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "severity", "summary", "paths", "related_ids"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "severity": {"enum": ["BLOCKER", "ERROR", "WARNING"]},
+        "summary": {"type": "string", "minLength": 1},
+        "paths": {"$ref": "#/$defs/pathList"},
+        "related_ids": {"$ref": "#/$defs/identifierList"}
+      }
+    },
+    "builderPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["change_set"],
+      "properties": {"change_set": {"$ref": "#/$defs/changeSet"}}
+    },
+    "changeSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "files_created", "files_modified", "files_deleted", "implemented_ids", "resolved_issue_ids", "unresolved_spec_gaps", "self_checks"],
+      "properties": {
+        "kind": {"enum": ["vplan", "smoke_foundation", "feature_batch", "review_fix", "debug_fix", "coverage_closure"]},
+        "files_created": {"$ref": "#/$defs/pathList"},
+        "files_modified": {"$ref": "#/$defs/pathList"},
+        "files_deleted": {"$ref": "#/$defs/pathList"},
+        "implemented_ids": {"$ref": "#/$defs/identifierList"},
+        "resolved_issue_ids": {"$ref": "#/$defs/identifierList"},
+        "unresolved_spec_gaps": {"$ref": "#/$defs/stringList"},
+        "self_checks": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "reviewerPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewed_revision", "gate", "prior_findings", "plan_inventory", "signoff_audit"],
+      "properties": {
+        "reviewed_revision": {"$ref": "#/$defs/revision"},
+        "gate": {"$ref": "#/$defs/reviewGate"},
+        "prior_findings": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/priorFinding"}
+        },
+        "plan_inventory": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/planInventory"}]
+        },
+        "signoff_audit": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/signoffAudit"}]
+        }
+      }
+    },
+    "reviewGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocking_count", "major_count", "minor_count", "note_count"],
+      "properties": {
+        "blocking_count": {"type": "integer", "minimum": 0},
+        "major_count": {"type": "integer", "minimum": 0},
+        "minor_count": {"type": "integer", "minimum": 0},
+        "note_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "priorFinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "disposition"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "disposition": {"enum": ["RESOLVED", "STILL_OPEN"]}
+      }
+    },
+    "planInventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["priority_order", "items", "random_campaigns", "coverage_items"],
+      "properties": {
+        "priority_order": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "items": {"type": "array", "items": {"$ref": "#/$defs/planItem"}},
+        "random_campaigns": {"type": "array", "items": {"$ref": "#/$defs/randomCampaign"}},
+        "coverage_items": {"type": "array", "items": {"$ref": "#/$defs/coverageItem"}}
+      }
+    },
+    "planItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "priority", "dependencies", "mandatory"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "kind": {"enum": ["FEATURE", "TEST"]},
+        "priority": {"type": "string", "minLength": 1},
+        "dependencies": {"$ref": "#/$defs/identifierList"},
+        "mandatory": {"type": "boolean"}
+      }
+    },
+    "randomCampaign": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "test", "seed_budget", "mandatory", "dependencies"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "test": {"$ref": "#/$defs/identifier"},
+        "seed_budget": {"type": "integer", "minimum": 1},
+        "mandatory": {"type": "boolean"},
+        "dependencies": {"$ref": "#/$defs/identifierList"}
+      }
+    },
+    "coverageItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "metric", "target", "mandatory", "dependencies"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "metric": {"type": "string", "minLength": 1},
+        "target": {"type": "number"},
+        "mandatory": {"type": "boolean"},
+        "dependencies": {"$ref": "#/$defs/identifierList"}
+      }
+    },
+    "signoffAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision_consistent", "mandatory_items_total", "mandatory_items_passed", "random_seeds_planned", "random_seeds_completed", "coverage_targets_met", "open_blockers", "open_fix_requests", "waivers", "evidence_refs"],
+      "properties": {
+        "revision_consistent": {"type": "boolean"},
+        "mandatory_items_total": {"type": "integer", "minimum": 0},
+        "mandatory_items_passed": {"type": "integer", "minimum": 0},
+        "random_seeds_planned": {"type": "integer", "minimum": 0},
+        "random_seeds_completed": {"type": "integer", "minimum": 0},
+        "coverage_targets_met": {"type": "boolean"},
+        "open_blockers": {"$ref": "#/$defs/identifierList"},
+        "open_fix_requests": {"$ref": "#/$defs/identifierList"},
+        "waivers": {"$ref": "#/$defs/stringList"},
+        "evidence_refs": {"$ref": "#/$defs/stringList"}
+      }
+    },
+    "runnerPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tested_revision", "run", "counts", "environment_actions", "failure", "case_results", "coverage_summary"],
+      "properties": {
+        "tested_revision": {"$ref": "#/$defs/revision"},
+        "run": {"$ref": "#/$defs/runRecord"},
+        "counts": {"$ref": "#/$defs/failureCounts"},
+        "environment_actions": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "failure": {"$ref": "#/$defs/failureRecord"},
+        "case_results": {"type": "array", "items": {"$ref": "#/$defs/caseResult"}},
+        "coverage_summary": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/coverageSummary"}]
+        }
+      }
+    },
+    "runRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "test", "seed", "command", "cwd", "tool", "tool_version", "exit_code", "duration_s"],
+      "properties": {
+        "phase": {"enum": ["PREFLIGHT", "COMPILE", "ELABORATION", "SIMULATION", "REGRESSION", "COVERAGE_MERGE"]},
+        "test": {"$ref": "#/$defs/nullableString"},
+        "seed": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "command": {"type": "string", "minLength": 1},
+        "cwd": {"$ref": "#/$defs/path"},
+        "tool": {"type": "string", "minLength": 1},
+        "tool_version": {"type": "string", "minLength": 1},
+        "exit_code": {"oneOf": [{"type": "integer"}, {"type": "null"}]},
+        "duration_s": {"type": "number", "minimum": 0}
+      }
+    },
+    "failureCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uvm_fatal", "uvm_error", "assertion_failures", "scoreboard_mismatches"],
+      "properties": {
+        "uvm_fatal": {"type": "integer", "minimum": 0},
+        "uvm_error": {"type": "integer", "minimum": 0},
+        "assertion_failures": {"type": "integer", "minimum": 0},
+        "scoreboard_mismatches": {"type": "integer", "minimum": 0}
+      }
+    },
+    "failureRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signature", "first_time", "log_excerpt_ref"],
+      "properties": {
+        "signature": {"$ref": "#/$defs/nullableString"},
+        "first_time": {"$ref": "#/$defs/nullableString"},
+        "log_excerpt_ref": {"$ref": "#/$defs/nullableString"}
+      }
+    },
+    "caseResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["test", "seed", "outcome"],
+      "properties": {
+        "test": {"type": "string", "minLength": 1},
+        "seed": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "outcome": {"enum": ["PASS", "ENVIRONMENT_ERROR", "SIMULATION_FAILURE", "TIMEOUT", "BLOCKED"]}
+      }
+    },
+    "coverageSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targets_met", "metrics", "waiver_ids"],
+      "properties": {
+        "targets_met": {"type": "boolean"},
+        "metrics": {"type": "array", "items": {"$ref": "#/$defs/coverageMetric"}},
+        "waiver_ids": {"$ref": "#/$defs/identifierList"}
+      }
+    },
+    "coverageMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "metric", "value", "target", "met"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "metric": {"type": "string", "minLength": 1},
+        "value": {"type": "number", "minimum": 0},
+        "target": {"type": "number", "minimum": 0},
+        "met": {"type": "boolean"}
+      }
+    },
+    "debuggerPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "subtype", "confidence", "expected", "observed", "root_cause", "suspected_locations", "affected_ids", "route_to", "fix_request", "rerun"],
+      "properties": {
+        "classification": {"enum": ["TB_BUG", "TEST_BUG", "DUT_BUG", "SPEC_GAP", "ENVIRONMENT", "TOOLCHAIN", "UNKNOWN"]},
+        "subtype": {"$ref": "#/$defs/nullableString"},
+        "confidence": {"enum": ["HIGH", "MEDIUM", "LOW"]},
+        "expected": {"type": "string", "minLength": 1},
+        "observed": {"type": "string", "minLength": 1},
+        "root_cause": {"$ref": "#/$defs/nullableString"},
+        "suspected_locations": {"type": "array", "items": {"$ref": "#/$defs/suspectedLocation"}},
+        "affected_ids": {"$ref": "#/$defs/identifierList"},
+        "route_to": {"enum": ["BUILDER", "RUNNER", "RTL_OWNER", "HUMAN"]},
+        "fix_request": {"$ref": "#/$defs/debugFixRequest"},
+        "rerun": {"$ref": "#/$defs/rerunRequest"}
+      }
+    },
+    "suspectedLocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line", "module", "signal"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "line": {"type": "integer", "minimum": 0},
+        "module": {"$ref": "#/$defs/nullableString"},
+        "signal": {"$ref": "#/$defs/nullableString"}
+      }
+    },
+    "debugFixRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instructions", "candidate_files", "must_preserve"],
+      "properties": {
+        "instructions": {"type": "string", "minLength": 1},
+        "candidate_files": {"$ref": "#/$defs/pathList"},
+        "must_preserve": {"$ref": "#/$defs/stringList"}
+      }
+    },
+    "rerunRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["test", "seed", "extra_diagnostics"],
+      "properties": {
+        "test": {"$ref": "#/$defs/nullableString"},
+        "seed": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "extra_diagnostics": {"$ref": "#/$defs/stringList"}
+      }
+    },
+    "recommendedNext": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "action", "reason"],
+          "properties": {"role": {"type": "null"}, "action": {"type": "null"}, "reason": {"type": "string"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "action", "reason"],
+          "properties": {"role": {"const": "builder"}, "action": {"$ref": "#/$defs/builderAction"}, "reason": {"type": "string"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "action", "reason"],
+          "properties": {"role": {"const": "reviewer"}, "action": {"$ref": "#/$defs/reviewerAction"}, "reason": {"type": "string"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "action", "reason"],
+          "properties": {"role": {"const": "runner"}, "action": {"$ref": "#/$defs/runnerAction"}, "reason": {"type": "string"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "action", "reason"],
+          "properties": {"role": {"const": "debugger"}, "action": {"$ref": "#/$defs/debuggerAction"}, "reason": {"type": "string"}}
+        }
+      ]
+    }
+  }
+}

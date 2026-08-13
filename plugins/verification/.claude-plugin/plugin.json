@@ -1,11 +1,17 @@
 {
   "name": "chip-design-verification",
-  "version": "1.2.0",
-  "description": "UVM testbench, test planning, constrained random, coverage closure, regression, and fix_request writing for DUT bugs",
-  "author": { "name": "chuanseng-ng", "url": "https://github.com/chuanseng-ng" },
-  "homepage": "https://github.com/chuanseng-ng/dv-agents",
-  "repository": "https://github.com/chuanseng-ng/dv-agents",
+  "version": "2.0.0",
+  "description": "Runs an evidence-driven SystemVerilog and UVM verification workflow through first-level builder, reviewer, runner, and debugger agents.",
+  "author": {
+    "name": "dv-agents contributors"
+  },
   "license": "MIT",
-  "skills": ["./skills/functional-verification"],
-  "agents": ["./agents/verification-orchestrator.md"]
+  "keywords": [
+    "systemverilog",
+    "uvm",
+    "verification",
+    "regression",
+    "coverage"
+  ]
 }
+

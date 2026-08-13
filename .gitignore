@@ -1,14 +1,5 @@
-# Claude files
-.claude/*
-CLAUDE.md
-
-# Python files
+.dv/
 __pycache__/
 *.pyc
-*.pyo
+.pytest_cache/
 
-# Chip-design memory: the memory/ tree is the version-controlled seed — track the
-# curated knowledge.md files, but ignore runtime artifacts (live data lives in the
-# central memory root, not the repo). See plugins/.../memory-keeper/memory_root.py.
-memory/*/experiences.jsonl
-memory/*/run_state.md
