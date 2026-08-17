@@ -16,7 +16,6 @@ REQUIRED_WORKERS = {
     "verification-builder",
     "verification-reviewer",
     "verification-runner",
-    "verification-debugger",
 }
 REQUIRED_AGENT_FIELDS = {"name", "description", "model", "color", "tools"}
 FORBIDDEN_AGENT_FIELDS = {"allowed-tools", "subagents"}
@@ -364,7 +363,7 @@ def _tool_names(value: Any) -> list[str]:
 
 
 def validate_agents(root: Path) -> list[str]:
-    """Validate every discovered agent while requiring the four DV workers."""
+    """Validate every discovered agent while requiring the three DV workers."""
 
     root = root.resolve()
     errors: list[str] = []
@@ -571,7 +570,7 @@ def validate_schemas(root: Path) -> list[str]:
         result_roles = _enum_at(result, "properties", "role", "enum") or _enum_at(
             result, "$defs", "role", "enum"
         )
-        expected_roles = {"builder", "reviewer", "runner", "debugger"}
+        expected_roles = {"builder", "reviewer", "runner"}
         if request_roles != expected_roles:
             errors.append(
                 f"{_display(schema_dir / 'task-request.schema.json', root)}: "

@@ -1,6 +1,6 @@
 ---
 name: functional-verification
-description: Use this skill when the user asks to plan, build, run, debug, close coverage, or sign off a SystemVerilog or UVM verification environment. It drives the complete DV campaign in the main session and delegates bounded work to the verification builder, reviewer, runner, and debugger agents.
+description: Use this skill when the user asks to plan, build, run, debug, close coverage, or sign off a SystemVerilog or UVM verification environment. It drives the complete DV campaign in the main session and delegates bounded work to the verification builder, reviewer, and runner agents (the runner also owns failure diagnosis).
 allowed-tools:
   - Read
   - Write
@@ -8,7 +8,7 @@ allowed-tools:
   - Glob
   - Grep
   - AskUserQuestion
-  - Agent(chip-design-verification:verification-builder, chip-design-verification:verification-reviewer, chip-design-verification:verification-runner, chip-design-verification:verification-debugger)
+  - Agent(chip-design-verification:verification-builder, chip-design-verification:verification-reviewer, chip-design-verification:verification-runner)
   - Bash(pwd)
   - Bash(git rev-parse *)
   - Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dv_flow.py" *)
@@ -28,11 +28,8 @@ allowed-tools:
 2. **如果存在** — 运行 `validate` 和 `show`，总结当前 phase、revision、work item
    进度和 open blocker，然后问用户下一步想做什么（resume / 重跑某个 gate /
    查看某个 task / 重新开始）。
-3. **如果不存在** — 问用户是否要启动一次新的 DV campaign。如果是，收集全部所需
-   信息（project root、design name、spec 路径、RTL filelist、RTL roots、top module、
-   priority order、simulator、clock/reset 信息），确认完毕后再运行 `init`。不要自
-   行假设默认值。
-4. 初始化或恢复完成后，**派发第一个 worker task 之前先征得用户确认**。
+3. **如果不存在** — 不要自己尝试阅读当前目录下有哪些内容。要停下来并直接摆出问题。在这一问题中让用户告知全部所需信息（project root（验证项目根目录，`.dv/` 建在此）、DUT name、spec 路径、RTL filelist、RTL roots（DUT RTL 源码，受保护）、top module、priority order、simulator、clock/reset 信息），确认完毕后再运行 `init`。除非用户同意，否则不要自行假设默认值。
+4. 初始化或恢复完成后，**派发第一个 worker task 之前先使用中文征得用户确认**。
 
 ## Operating Model
 
@@ -43,10 +40,11 @@ allowed-tools:
                                   ^
                                   |
 verification-reviewer <---- main session ----> verification-runner
-                                  |
-                                  v
-                         verification-debugger
 ```
+
+The runner owns both execution and read-only failure diagnosis; the analysis
+is embedded in the failing execution result (`payload.diagnosis`), so one
+runner task/result covers execution and analysis — not a separate task or agent.
 
 Worker 之间不互相调用或通信。每个 worker 接收一个不可变的 task request，返回一个
 JSON result。你负责校验并记录该 result，然后再派发下一个 worker。Worker 的
@@ -56,7 +54,7 @@ JSON result。你负责校验并记录该 result，然后再派发下一个 work
 
 - `.dv/workflow_state.json`
 - task 创建、phase 推进、重试预算、审批 gate
-- reviewer 发现的 review finding、runner 的运行失败、debugger 的诊断结果和 fix request 的路由
+- reviewer 发现的 review finding、runner 的运行失败、runner 的诊断结果和 fix request 的路由
 - 判断某项证据是否满足 gate 条件
 
 不要自己写 V-plan、testbench、test、assertion 或 coverage model。不要自己做 code
@@ -66,8 +64,10 @@ review。不要自己去读冗长的仿真 log。把这些有明确边界的工�
 
 以下文件按需阅读，路径相对于本 `SKILL.md`：
 
+- `references/machine-contract.md` — 命令面、枚举、request/result schema、gate 条件的权威查询参考；**查这个，不要读 `dv_flow.py` 源码**
 - `references/task-contract.md` — 首次派发 task 或处理任何 failure 路由前
 - `references/vplan-template.md` — 创建 V-plan task 前
+- `references/plan-tables.md` — 创建 V-plan task 前（testpoint/testlist/covergroups 表格的列模式、`tables.json` 契约与渲染命令）
 - `references/workflow-state.schema.json` — 排查 state 校验问题时
 - `references/task-request.schema.json` 和 `references/task-result.schema.json` — worker 返回格式异常时
 
@@ -78,7 +78,7 @@ review。不要自己去读冗长的仿真 log。把这些有明确边界的工�
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dv_flow.py" init \
   --root <project-root> \
-  --design-name <name> \
+  --dut-name <name> \
   --spec <spec-path> \
   --rtl-filelist <filelist-path> \
   --rtl-root <rtl-source-file-or-directory> \
@@ -86,7 +86,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dv_flow.py" init \
 ```
 
 Repeat `--rtl-root` for every protected RTL source file or directory. Run the
-command from the design project root and confirm `pwd` resolves to
+command from the verification project root and confirm `pwd` resolves to
 `<project-root>` before creating or dispatching a task.
 
 If `.dv/workflow_state.json` already exists, run `validate` and resume it. Never
@@ -95,12 +95,14 @@ silently replace an existing run.
 All task files live under `.dv/tasks/<task-id>/`. Use the state tool for every
 mutation. Do not hand-edit `workflow_state.json`.
 
-Initialization creates a content-addressed `baseline_revision` over the
-specification, RTL filelist, and every protected RTL root. Use it as
-`input_revision` for the first plan-builder task. There is no revision-less
-dispatch. Builder outputs extend that baseline into composite revisions;
-accepted and frozen revisions always cover every path in their recorded
-`revision_paths`.
+Initialization records the specification, RTL filelist, and every protected RTL
+root as read-only design inputs and creates a content-addressed
+`baseline_revision` over the verification assets inside the project (initially
+empty). Specification and RTL paths may live outside the project root and are
+excluded from the revision hash. Use `baseline_revision` as `input_revision` for
+the first plan-builder task. There is no revision-less dispatch. Builder outputs
+extend that baseline into composite revisions; accepted and frozen revisions
+always cover every path in their recorded `revision_paths`.
 
 ## Task Dispatch Protocol
 
@@ -111,9 +113,14 @@ accepted and frozen revisions always cover every path in their recorded
 3. 填写生成的 `request.json`。保持 scope 紧凑：提供准确的 `project_root`、非空的
    `input_revision`、完整的 `revision_paths`、带类型的 `inputs`、明确的 read/write
    根路径、可观测的 `acceptance` 条件、有界的 `context`（runner 命令必须包含
-   `timeout_s`）、不可变的 `prior_result_refs`、以及自动生成的
-   `expected_result_path`。不要因为某个 builder 修改了一个 TB 文件就去掉 baseline
-   路径。
+   `timeout_s`；**builder 代码任务在 `context` 中带上 `tool`**，目标仿真器/工具名。
+   本机无仿真工具时，builder 默认用插件自带的
+   `${CLAUDE_PLUGIN_ROOT}/scripts/static_check.py` 做 lint-only 静态语法检查；
+   `tool` 用于描述目标语法风格，以及本机可用时补充真实 lint。smoke 用单次
+   build-and-run 时，runner 的 `context` 额外带 `build_and_run: true`，命令必须是
+   先重建再 simv 的 wrapper）、不可变的 `prior_result_refs`、
+   以及自动生成的 `expected_result_path`。不要因为某个 builder 修改了一个 TB 文件
+   就去掉 baseline 路径。
 4. 运行 `seal-task`。不要派发 draft 状态或校验不通过的 request。
 5. 用 `run_in_background: false` 派发一个具名 worker。传入绝对路径的 request 文件，
    提示词为：
@@ -148,12 +155,35 @@ INIT -> PLAN -> PREFLIGHT -> SMOKE
 向 `verification-builder` 派发 `WRITE_VPLAN`（基于 `baseline_revision`）。Builder
 将编写结构化的 Markdown V-plan，包含稳定的 requirement/feature/test ID、TB 架构、
 checker/reference-model 策略、assertion、coverage、依赖关系、优先级语义和验收标准。
+Builder **在写任何 TB 代码之前**，还要基于 `${CLAUDE_PLUGIN_ROOT}/template/` 的三个
+模板（testpoint / testlist / covergroups）生成 `verification/tables/tables.json` 与
+三个 `.xlsx`（见 `references/plan-tables.md`），其稳定 ID 与 V-plan 的 Traceability
+Matrix 一一对应。模板是外部只读输入，不进 revision；`tables.json` 与 `.xlsx` 是
+builder 在 project root 内写出的验证资产，进入 revision。
 
 向 `verification-reviewer` 派发 `REVIEW_VPLAN`（基于 builder 产出的 revision）。
+Reviewer 除审查 V-plan 外，还读取 `verification/tables/tables.json`（reviewer 无
+Bash，读文本源而非二进制 xlsx）审查三张表格的完整性、ID 唯一性与取值合法性。
 
-- `APPROVED`：记录审批通过，继续推进。
+- `APPROVED`：记录 reviewer 审批通过，然后**停下来征求用户（人）对 V-plan 的审批**。
 - `CHANGES_REQUIRED`：仅将 blocking finding ID 发给 builder 修复，然后重新 review。
 - `BLOCKED`：暂停，等待缺失的 specification 或用户输入。
+
+Reviewer `APPROVED` 之后、**派发任何 runner（含 PREFLIGHT）或让 builder 写 TB 代码
+之前**，必须先把 V-plan 文档和三个交付表格（`verification/tables/testpoint.xlsx`、
+`testlist.xlsx`、`covergroups.xlsx`）交给用户人工审核，并用
+`approve --gate VPLAN --decision APPROVED --approved-by <用户> --note "<理由>"
+--revision <accepted plan revision>` 记录人工审批。人工审批通过前，
+`transition --to PREFLIGHT` 会因缺少 `VPLAN` 人工审批而失败，所以机器会强制你停下。
+若用户 `REJECTED`，回到 builder 修改 V-plan 并重新走 `REVIEW_VPLAN`。
+
+若用户在审核中**修改了 `.xlsx` 表格**：把这些改动交给 builder 派发
+`APPLY_PLAN_EDITS`（它运行 `render_tables.py extract` 把改动折回 `tables.json` 并
+重新渲染三张表格，产出新的 plan revision），然后在新 revision 上重新派发
+`REVIEW_VPLAN`、重新征求人工审批，且 `approve --gate VPLAN --revision` 必须绑定
+**新的 revision**。直接原地改 `.xlsx` 而不走 `APPLY_PLAN_EDITS`，会使工作区与已
+接受 revision 漂移，`transition` 会以 revision-drift 拦截——这正是强制走闭环的
+保护。详见 `references/plan-tables.md`「人工审批时的修改闭环」。
 
 审批通过后，提取 reviewer 返回的结构化 `plan_inventory`（包含 priority order、
 directed work items、random campaigns、coverage items）。后续通过这份 inventory 来
@@ -191,14 +221,25 @@ Gate：所需 RTL/工具输入齐全，执行路径可用。环境重试有上�
 - assertion 和 coverage collector 实例化
 - watchdog 和干净的 objection 终止
 
-先做 code review，再派发 runner 做 compile/elaboration 和 smoke test。Smoke 是硬
-gate。在 review 过的 revision 通过编译、elaboration 和 smoke 之前，不得开始 feature
-实现。
+先做 code review，再派发 runner 做 smoke。**优先派发单次 build-and-run smoke
+任务**：一个 `RUN_CASE`，`context` 里带 `build_and_run: true`，命令按 sealed
+filelist/defines/top 先重建再运行 smoke sim——编译通过就紧接着 simv，一次派发同时
+证明编译+仿真（省去每次 fix 后「编译→仿真」的两次派发往返）。`context.command`
+必须是会重编译的 wrapper（如 `make run`），不能复用陈旧二进制。严格链
+`COMPILE_ELAB → RUN_CASE` 仍是合法路径，可继续使用。Smoke 是硬 gate：在 review
+过的 revision 通过编译、elaboration 和 smoke 之前，不得开始 feature 实现。
+
+Builder 在返回 `READY_FOR_REVIEW` 前已做 lint-only 静态语法检查——默认是插件自带
+的零依赖 `static_check.py`（见 `verification-builder.md`）。因此派发 runner 时，
+`COMPILE_ELAB` 失败应主要是功能/elaboration 层面问题，而非纯语法错误；若仍出现
+语法级失败，说明 builder 漏做或漏报 lint，应回到 builder 而非当作正常编译迭代。
 
 ### 3. 优先级 Feature 队列
 
-V-plan 定义了 priority order，默认 `P1, P2, P3`。除非 plan 明确声明，否则不要假设
-`P0` 或 `P1` 是最高优先级。
+V-plan 定义了 priority order，默认 `P0, P1, P2`。除非 plan 明确声明，否则不要假设
+某个字母是最高优先级（以 priority_order 列表顺序为准）。`P3`（PSV）是仅列举项：
+只出现在表格与 Traceability Matrix 中，不进入 `priority_order`、不作为 work item
+调度，也不编译/仿真。
 
 每次处理一个 feature 或一个小批量：
 
@@ -239,12 +280,13 @@ Runner outcome 按如下方式路由：
 |---|---|
 | `PASS` | Evaluate the current gate. |
 | `ENVIRONMENT_ERROR` | Dispatch a bounded runner retry. |
-| `COMPILE_ERROR` or `ELABORATION_ERROR` | Dispatch the debugger with the first diagnostic and source context. |
-| `SIMULATION_FAILURE` or `TIMEOUT` | Dispatch the debugger with test, seed, log, wave, and first failure signature. |
+| `COMPILE_ERROR` or `ELABORATION_ERROR` | Read the embedded `payload.diagnosis` from the failing runner result; route by its classification. |
+| `SIMULATION_FAILURE` or `TIMEOUT` | Read the embedded `payload.diagnosis` from the failing runner result; route by its classification. |
 | `COVERAGE_GAP` | Dispatch a bounded `COVERAGE_CLOSURE` builder task for the reported unmet targets. |
 | `BLOCKED` | Record the blocker and request the missing input. |
 
-Debugger classification 按如下方式路由：
+Runner diagnosis classification（失败结果中嵌入的 `payload.diagnosis.classification`）
+按如下方式路由：
 
 | Classification | Action |
 |---|---|
@@ -254,11 +296,17 @@ Debugger classification 按如下方式路由：
 | `SPEC_GAP` | Enter a human approval gate; do not invent behavior. |
 | `UNKNOWN` | Allow one evidence-collection round, then enter a human gate. |
 
+当 `payload.diagnosis.state = "NEEDS_MORE_EVIDENCE"` 时，用
+`rerun.extra_diagnostics` 派发一个**新的 `RUN_CASE` task**（`context.extra_diagnostics`
+携带这些诊断请求），其证据用于下一次归因。这不是一个新诊断 task——只有 runner
+会做归因，且永远与执行在同一 result 里。
+
 A confirmed DUT defect is neither skipped, passed, nor waived into clean
-signoff. Main records a fix request, an external RTL owner changes only protected
-RTL, and the updated revision must rerun the debugger's exact test/seed plus the
-affected cumulative regression before the fix request can close. The prior TB
-review remains authoritative because no verification asset changed.
+signoff. Main records a fix request and marks the affected items `BLOCKED_DUT`;
+the workflow cannot reach signoff while the fix request is open. The external
+RTL owner fixes the protected RTL out of band, then the operator re-runs
+`dv_flow.py init` to start a fresh campaign against the corrected design. The
+tool does not track RTL drift or accept an RTL revision on the fly.
 
 ## Work-item 和 DUT-fix 路由
 
@@ -287,21 +335,21 @@ IDs happen to overlap.
 For a confirmed `DUT_BUG`, use this auditable route:
 
 ```text
-add-fix-request
-  -> external RTL owner updates a protected --rtl-root
-  -> accept-rtl-update --expected-revision <old> --external-ref <change-id>
-  -> rerun the debugger's exact test/seed on the new revision
-  -> run the affected cumulative regression
-  -> set-item ... --status PASSED --last-task-id <passing-run-task>
-  -> resolve-fix-request --verification-task-id <passing-run-task>
+add-fix-request --failure-task-id <runner-with-embedded-DUT_BUG-diagnosis>
+  -> affected work items become BLOCKED_DUT
+  -> (out of band) external RTL owner fixes the protected RTL
+  -> operator re-runs `dv_flow.py init` for a fresh campaign
 ```
 
-`accept-rtl-update` is the only non-builder path that can register a new
-composite revision. It rejects stale expected revisions and any simultaneous
-non-RTL drift, clears a frozen revision, and marks the fix
-`RTL_UPDATED_PENDING_VERIFY`. `resolve-fix-request` requires all affected items
-to pass on that exact new RTL revision; phase advancement additionally requires
-the affected cumulative regression.
+`add-fix-request` reads the `DUT_BUG` classification from the failing runner
+result's embedded `payload.diagnosis`; there is no separate diagnosis task to
+cite.
+
+`add-fix-request` is the only way to record a confirmed DUT defect. It marks the
+affected work items `BLOCKED_DUT` and keeps the fix request `OPEN`; the signoff
+and complete gates stay closed while any fix request is open. The workflow does
+not accept an on-the-fly RTL revision or resolve a fix request in place — after
+the RTL owner fixes the design, the operator reinitializes.
 
 ## 重试限制
 

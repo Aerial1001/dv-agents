@@ -1,7 +1,7 @@
 {
   "name": "chip-design-verification",
   "version": "2.0.0",
-  "description": "Runs an evidence-driven SystemVerilog and UVM verification workflow through first-level builder, reviewer, runner, and debugger agents.",
+  "description": "Runs an evidence-driven SystemVerilog and UVM verification workflow through first-level builder, reviewer, and runner agents (the runner also owns failure diagnosis).",
   "author": {
     "name": "dv-agents contributors"
   },

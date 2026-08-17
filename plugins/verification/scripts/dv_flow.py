@@ -72,6 +72,7 @@ TRANSITIONS = {
 ROLE_ACTIONS = {
     "builder": {
         "WRITE_VPLAN",
+        "APPLY_PLAN_EDITS",
         "BUILD_SMOKE_FOUNDATION",
         "IMPLEMENT_FEATURE_BATCH",
         "APPLY_REVIEW_FIX",
@@ -86,7 +87,6 @@ ROLE_ACTIONS = {
         "RUN_REGRESSION",
         "MERGE_COVERAGE",
     },
-    "debugger": {"DIAGNOSE_FAILURE", "REDIAGNOSE_WITH_EVIDENCE"},
 }
 
 ROLE_OUTCOMES = {
@@ -102,7 +102,6 @@ ROLE_OUTCOMES = {
         "COVERAGE_GAP",
         "BLOCKED",
     },
-    "debugger": {"DIAGNOSED", "NEEDS_MORE_EVIDENCE", "BLOCKED"},
 }
 
 RETRY_LIMITS = {
@@ -112,6 +111,16 @@ RETRY_LIMITS = {
     "tb-fix": 3,
     "debug-evidence": 2,
     "none": 1,
+}
+
+# A failing runner execution task carries an embedded `payload.diagnosis`
+# (execution + analysis are one task/result). These are the outcomes that
+# require it.
+RUNNER_FAILURE_OUTCOMES = {
+    "COMPILE_ERROR",
+    "ELABORATION_ERROR",
+    "SIMULATION_FAILURE",
+    "TIMEOUT",
 }
 
 TASK_STATUSES = {"DRAFT", "READY", "COMPLETED", "BLOCKED", "FAILED"}
@@ -447,11 +456,6 @@ def validate_request(root: Path, request: dict[str, Any], task: dict[str, Any]) 
                 errors.append(f"inputs[{index}].path must be a non-empty string")
                 continue
             input_path = resolve_path(root, item["path"])
-            try:
-                relative_to_root(root, input_path)
-            except FlowError:
-                errors.append(f"inputs[{index}].path escapes project root")
-                continue
             if not isinstance(item["required"], bool):
                 errors.append(f"inputs[{index}].required must be boolean")
                 continue
@@ -475,11 +479,6 @@ def validate_request(root: Path, request: dict[str, Any], task: dict[str, Any]) 
             read_scope = read_value
             if len(read_scope) != len(set(read_scope)):
                 errors.append("scope.read must contain unique paths")
-            for value in read_scope:
-                try:
-                    relative_to_root(root, resolve_path(root, value))
-                except FlowError:
-                    errors.append(f"read scope escapes project root: {value}")
         if not isinstance(write_value, list) or not all(isinstance(v, str) for v in write_value):
             errors.append("scope.write must be an array of paths")
         else:
@@ -511,7 +510,7 @@ def validate_request(root: Path, request: dict[str, Any], task: dict[str, Any]) 
             or len(scope["files"]) != len(set(scope["files"]))
         ):
             errors.append("scope.files must contain unique paths")
-        if request["role"] in {"reviewer", "debugger"} and write_scope:
+        if request["role"] == "reviewer" and write_scope:
             errors.append(f"{request['role']} tasks must have an empty write scope")
         elif request["role"] == "builder" and not write_scope:
             errors.append("builder tasks require an explicit write scope")
@@ -554,8 +553,8 @@ def validate_request(root: Path, request: dict[str, Any], task: dict[str, Any]) 
             ):
                 errors.append(f"required input is outside scope.read: inputs[{index}]")
     revision_paths = request.get("revision_paths")
-    if not isinstance(revision_paths, list) or not revision_paths:
-        errors.append("revision_paths must be a non-empty array")
+    if not isinstance(revision_paths, list):
+        errors.append("revision_paths must be an array")
     elif not all(isinstance(value, str) and value for value in revision_paths):
         errors.append("revision_paths must contain non-empty paths")
     elif len(set(revision_paths)) != len(revision_paths):
@@ -601,11 +600,11 @@ def validate_request(root: Path, request: dict[str, Any], task: dict[str, Any]) 
         context = request["context"]
         allowed_context_keys = {
             "feature_ids", "test_ids", "finding_ids", "affected_ids",
-            "work_item_ids", "coverage_ids", "failure_id",
+            "work_item_ids", "coverage_ids",
             "random_campaign_id", "campaign_id", "command", "cwd", "tool",
             "tool_version", "simulator", "timeout_s", "seeds",
             "regression_scope", "case_manifest", "acceptance_markers",
-            "extra_diagnostics", "parameters", "environment",
+            "extra_diagnostics", "parameters", "environment", "build_and_run",
         }
         unexpected = sorted(set(context) - allowed_context_keys)
         if unexpected:
@@ -633,7 +632,7 @@ def validate_request(root: Path, request: dict[str, Any], task: dict[str, Any]) 
                 or len(value) != len(set(value))
             ):
                 errors.append(f"context.{key} must be an array of unique values")
-        for key in ("failure_id", "random_campaign_id", "campaign_id"):
+        for key in ("random_campaign_id", "campaign_id"):
             value = context.get(key)
             if value is not None and (
                 not isinstance(value, str) or not ID_RE.fullmatch(value)
@@ -756,6 +755,7 @@ def validate_builder_result(result: dict[str, Any], errors: list[str]) -> None:
         return
     expected_kind = {
         "WRITE_VPLAN": "vplan",
+        "APPLY_PLAN_EDITS": "plan_edits",
         "BUILD_SMOKE_FOUNDATION": "smoke_foundation",
         "IMPLEMENT_FEATURE_BATCH": "feature_batch",
         "APPLY_REVIEW_FIX": "review_fix",
@@ -807,10 +807,6 @@ def validate_issue_shapes(result: dict[str, Any], errors: list[str]) -> None:
         "builder": ({"id", "severity", "summary", "paths", "related_ids"}, {"BLOCKER", "WARNING"}),
         "runner": ({"id", "severity", "summary", "paths", "related_ids"}, {"BLOCKER", "ERROR", "WARNING"}),
     }
-    if role == "debugger":
-        if issues:
-            errors.append("debugger issues must be empty; use diagnosis payload and evidence")
-        return
     for index, issue in enumerate(issues):
         location = f"issues[{index}]"
         if not isinstance(issue, dict):
@@ -998,6 +994,7 @@ def validate_runner_result(result: dict[str, Any], errors: list[str]) -> None:
             "failure",
             "case_results",
             "coverage_summary",
+            "diagnosis",
         },
         "payload",
         errors,
@@ -1228,35 +1225,47 @@ def validate_runner_result(result: dict[str, Any], errors: list[str]) -> None:
             errors.append(f"{result['outcome']} requires a failure signature")
     if result["action"] != "MERGE_COVERAGE" and payload["coverage_summary"] is not None:
         errors.append("coverage_summary is only valid for MERGE_COVERAGE")
+    diagnosis = payload["diagnosis"]
+    if result["outcome"] in RUNNER_FAILURE_OUTCOMES:
+        if not isinstance(diagnosis, dict):
+            errors.append(
+                f"{result['outcome']} requires an embedded payload.diagnosis "
+                "(execution and analysis are one result)"
+            )
+        else:
+            validate_diagnosis_object(diagnosis, errors)
+    elif diagnosis is not None:
+        errors.append(
+            "payload.diagnosis is only valid on a failing runner outcome "
+            "(COMPILE_ERROR, ELABORATION_ERROR, SIMULATION_FAILURE, or TIMEOUT)"
+        )
 
 
-def validate_debugger_result(result: dict[str, Any], errors: list[str]) -> None:
-    if result["artifacts"]:
-        errors.append("debugger must not declare writable artifacts")
-    if result["agent_status"] != "COMPLETED":
+def validate_diagnosis_object(diagnosis: dict[str, Any], errors: list[str]) -> None:
+    """Validate the embedded `payload.diagnosis` of a failing runner execution result."""
+    if not isinstance(diagnosis, dict):
+        errors.append("payload.diagnosis must be an object")
         return
-    if not result["evidence"]:
-        errors.append("completed debugger result requires evidence")
-    payload = require_object_fields(
-        result["payload"],
-        {
-            "classification",
-            "subtype",
-            "confidence",
-            "expected",
-            "observed",
-            "root_cause",
-            "suspected_locations",
-            "affected_ids",
-            "route_to",
-            "fix_request",
-            "rerun",
-        },
-        "payload",
-        errors,
-    )
-    if payload is None:
+    fields = {
+        "state",
+        "classification",
+        "subtype",
+        "confidence",
+        "expected",
+        "observed",
+        "root_cause",
+        "suspected_locations",
+        "affected_ids",
+        "route_to",
+        "fix_request",
+        "rerun",
+    }
+    if set(diagnosis) != fields:
+        errors.append("payload.diagnosis must contain exactly the typed diagnosis fields")
         return
+    state = diagnosis["state"]
+    if state not in {"DIAGNOSED", "NEEDS_MORE_EVIDENCE"}:
+        errors.append("invalid diagnosis state")
     classifications = {
         "TB_BUG": "BUILDER",
         "TEST_BUG": "BUILDER",
@@ -1266,103 +1275,102 @@ def validate_debugger_result(result: dict[str, Any], errors: list[str]) -> None:
         "TOOLCHAIN": "RUNNER",
         "UNKNOWN": None,
     }
-    classification = payload["classification"]
+    classification = diagnosis["classification"]
     if not isinstance(classification, str) or classification not in classifications:
-        errors.append("invalid debugger classification")
-    elif classifications[classification] and payload["route_to"] != classifications[classification]:
-        errors.append("debugger classification and route_to disagree")
-    elif classification == "UNKNOWN" and payload["route_to"] not in {"RUNNER", "HUMAN"}:
+        errors.append("invalid diagnosis classification")
+    elif classifications[classification] and diagnosis["route_to"] != classifications[classification]:
+        errors.append("diagnosis classification and route_to disagree")
+    elif classification == "UNKNOWN" and diagnosis["route_to"] not in {"RUNNER", "HUMAN"}:
         errors.append("UNKNOWN diagnosis must route to RUNNER or HUMAN")
-    if not isinstance(payload["confidence"], str) or payload["confidence"] not in {
+    if not isinstance(diagnosis["confidence"], str) or diagnosis["confidence"] not in {
         "HIGH", "MEDIUM", "LOW"
     }:
-        errors.append("invalid debugger confidence")
-    if classification == "DUT_BUG" and payload["confidence"] == "LOW":
+        errors.append("invalid diagnosis confidence")
+    if classification == "DUT_BUG" and diagnosis["confidence"] == "LOW":
         errors.append("low-confidence evidence cannot confirm a DUT bug")
     for key in ("expected", "observed"):
-        if not isinstance(payload[key], str) or not payload[key]:
-            errors.append(f"payload.{key} must be a non-empty string")
+        if not isinstance(diagnosis[key], str) or not diagnosis[key]:
+            errors.append(f"payload.diagnosis.{key} must be a non-empty string")
     for key in ("subtype", "root_cause"):
-        if payload[key] is not None and (
-            not isinstance(payload[key], str) or not payload[key]
+        if diagnosis[key] is not None and (
+            not isinstance(diagnosis[key], str) or not diagnosis[key]
         ):
-            errors.append(f"payload.{key} must be a non-empty string or null")
-    if not isinstance(payload["route_to"], str) or payload["route_to"] not in {
+            errors.append(f"payload.diagnosis.{key} must be a non-empty string or null")
+    if not isinstance(diagnosis["route_to"], str) or diagnosis["route_to"] not in {
         "BUILDER", "RUNNER", "RTL_OWNER", "HUMAN"
     }:
-        errors.append("payload.route_to is invalid")
-    locations = payload["suspected_locations"]
+        errors.append("payload.diagnosis.route_to is invalid")
+    locations = diagnosis["suspected_locations"]
     if not isinstance(locations, list):
-        errors.append("payload.suspected_locations must be an array")
+        errors.append("payload.diagnosis.suspected_locations must be an array")
     else:
         for index, location in enumerate(locations):
             shaped = require_object_fields(
                 location, {"path", "line", "module", "signal"},
-                f"payload.suspected_locations[{index}]", errors,
+                f"payload.diagnosis.suspected_locations[{index}]", errors,
             )
             if shaped is None:
                 continue
             if not isinstance(shaped["path"], str) or not shaped["path"]:
-                errors.append(f"payload.suspected_locations[{index}].path must be non-empty")
+                errors.append(f"payload.diagnosis.suspected_locations[{index}].path must be non-empty")
             if (
                 isinstance(shaped["line"], bool)
                 or not isinstance(shaped["line"], int)
                 or shaped["line"] < 0
             ):
-                errors.append(f"payload.suspected_locations[{index}].line is invalid")
+                errors.append(f"payload.diagnosis.suspected_locations[{index}].line is invalid")
             for key in ("module", "signal"):
                 if shaped[key] is not None and (
                     not isinstance(shaped[key], str) or not shaped[key]
                 ):
                     errors.append(
-                        f"payload.suspected_locations[{index}].{key} must be a string or null"
+                        f"payload.diagnosis.suspected_locations[{index}].{key} must be a string or null"
                     )
-    affected_ids = payload["affected_ids"]
+    affected_ids = diagnosis["affected_ids"]
     if (
         not isinstance(affected_ids, list)
         or not all(isinstance(value, str) and ID_RE.fullmatch(value) for value in affected_ids)
         or len(affected_ids) != len(set(affected_ids))
     ):
-        errors.append("payload.affected_ids must contain unique IDs")
+        errors.append("payload.diagnosis.affected_ids must contain unique IDs")
     fix_request = require_object_fields(
-        payload["fix_request"],
+        diagnosis["fix_request"],
         {"instructions", "candidate_files", "must_preserve"},
-        "payload.fix_request",
+        "payload.diagnosis.fix_request",
         errors,
     )
     if fix_request is not None:
         if not isinstance(fix_request["instructions"], str) or not fix_request["instructions"]:
-            errors.append("payload.fix_request.instructions must be non-empty")
+            errors.append("payload.diagnosis.fix_request.instructions must be non-empty")
         for key in ("candidate_files", "must_preserve"):
             if not isinstance(fix_request[key], list) or not all(
                 isinstance(value, str) and value for value in fix_request[key]
             ):
-                errors.append(f"payload.fix_request.{key} must contain non-empty strings")
+                errors.append(f"payload.diagnosis.fix_request.{key} must contain non-empty strings")
             elif len(fix_request[key]) != len(set(fix_request[key])):
-                errors.append(f"payload.fix_request.{key} must contain unique values")
+                errors.append(f"payload.diagnosis.fix_request.{key} must contain unique values")
     rerun = require_object_fields(
-        payload["rerun"],
+        diagnosis["rerun"],
         {"test", "seed", "extra_diagnostics"},
-        "payload.rerun",
+        "payload.diagnosis.rerun",
         errors,
     )
     if rerun is not None:
         if rerun["test"] is not None and (
             not isinstance(rerun["test"], str) or not rerun["test"]
         ):
-            errors.append("payload.rerun.test must be a string or null")
+            errors.append("payload.diagnosis.rerun.test must be a string or null")
         if rerun["seed"] is not None and (
             isinstance(rerun["seed"], bool)
             or not isinstance(rerun["seed"], int)
             or rerun["seed"] < 0
         ):
-            errors.append("payload.rerun.seed must be a non-negative integer or null")
+            errors.append("payload.diagnosis.rerun.seed must be a non-negative integer or null")
         if not isinstance(rerun["extra_diagnostics"], list) or not all(
             isinstance(value, str) and value for value in rerun["extra_diagnostics"]
         ):
-            errors.append("payload.rerun.extra_diagnostics must contain non-empty strings")
-    if result["outcome"] == "NEEDS_MORE_EVIDENCE":
-        rerun = payload["rerun"]
+            errors.append("payload.diagnosis.rerun.extra_diagnostics must contain non-empty strings")
+    if state == "NEEDS_MORE_EVIDENCE":
         if not isinstance(rerun, dict) or not rerun.get("extra_diagnostics"):
             errors.append("NEEDS_MORE_EVIDENCE requires bounded extra diagnostics")
 
@@ -1523,8 +1531,6 @@ def validate_result(root: Path, result: dict[str, Any], task: dict[str, Any]) ->
         validate_reviewer_result(result, errors)
     elif structure_valid and task["role"] == "runner":
         validate_runner_result(result, errors)
-    elif structure_valid and task["role"] == "debugger":
-        validate_debugger_result(result, errors)
     if structure_valid:
         validate_issue_shapes(result, errors)
     parent_id = task.get("parent_task_id")
@@ -1591,23 +1597,27 @@ def snapshot_path_digest(root: Path, path: Path) -> str:
     return "sha256:" + hasher.hexdigest()
 
 
+EMPTY_SNAPSHOT_REVISION = "sha256:" + hashlib.sha256().hexdigest()
+
+
 def snapshot_manifest(
     root: Path, values: list[str]
-) -> tuple[str, list[str], dict[str, str]]:
+) -> tuple[str, list[str], dict[str, str], dict[str, dict[str, Any]]]:
+    """Return (revision, paths, digests, files) for the canonical asset set.
+
+    `files` maps each regular-file relative path to its content digest plus a
+    stat key (`mtime_ns`, `size`) so later drift checks can skip re-reading
+    unchanged files. Production callers store it on the artifact entry.
+    """
     if not values:
-        raise FlowError("snapshot requires at least one revision path")
+        return EMPTY_SNAPSHOT_REVISION, [], {}, {}
     paths = canonical_snapshot_paths(root, values)
+    files = _file_manifest(root, paths)
     digests = {
-        relative_to_root(root, path): snapshot_path_digest(root, path)
+        relative_to_root(root, path): _digest_from_manifest(root, path, files)
         for path in paths
     }
-    hasher = hashlib.sha256()
-    for relative, digest in sorted(digests.items()):
-        hasher.update(relative.encode("utf-8"))
-        hasher.update(b"\0")
-        hasher.update(digest.encode("ascii"))
-        hasher.update(b"\0")
-    return "sha256:" + hasher.hexdigest(), list(digests), digests
+    return _revision_from_digests(digests), list(digests), digests, files
 
 
 def paths_overlap(first: Path, second: Path) -> bool:
@@ -1623,6 +1633,122 @@ def artifact_digest(root: Path, path: Path) -> str:
                 break
             hasher.update(chunk)
     return "sha256:" + hasher.hexdigest()
+
+
+def _file_entry(root: Path, path: Path) -> dict[str, Any]:
+    st = path.stat()
+    return {
+        "sha256": artifact_digest(root, path),
+        "mtime_ns": st.st_mtime_ns,
+        "size": st.st_size,
+    }
+
+
+def _file_manifest(root: Path, paths: list[Path]) -> dict[str, dict[str, Any]]:
+    manifest: dict[str, dict[str, Any]] = {}
+    for path in paths:
+        if path.is_file():
+            manifest[relative_to_root(root, path)] = _file_entry(root, path)
+        else:
+            for child in sorted(item for item in path.rglob("*") if item.is_file()):
+                manifest[relative_to_root(root, child)] = _file_entry(root, child)
+    return manifest
+
+
+def _update_file_record(hasher: Any, relative: str, content_digest: str) -> None:
+    record = json.dumps(
+        {"kind": "file", "path": relative, "sha256": content_digest[len("sha256:"):]},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    hasher.update(len(record).to_bytes(8, "big"))
+    hasher.update(record)
+
+
+def _digest_from_manifest(
+    root: Path, path: Path, files: dict[str, dict[str, Any]]
+) -> str:
+    """Reproduce hash_path's framing for one canonical path from cached digests."""
+    hasher = hashlib.sha256()
+    relative = relative_to_root(root, path)
+    if path.is_file():
+        _update_file_record(hasher, relative, files[relative]["sha256"])
+    else:
+        record = json.dumps(
+            {"kind": "directory", "path": relative},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        hasher.update(len(record).to_bytes(8, "big"))
+        hasher.update(record)
+        for child in sorted(item for item in path.rglob("*") if item.is_file()):
+            child_relative = relative_to_root(root, child)
+            _update_file_record(hasher, child_relative, files[child_relative]["sha256"])
+    return "sha256:" + hasher.hexdigest()
+
+
+def _revision_from_digests(digests: dict[str, str]) -> str:
+    hasher = hashlib.sha256()
+    for relative, digest in sorted(digests.items()):
+        hasher.update(relative.encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(digest.encode("ascii"))
+        hasher.update(b"\0")
+    return "sha256:" + hasher.hexdigest()
+
+
+def _refresh_file(
+    root: Path,
+    path: Path,
+    cached: dict[str, dict[str, Any]],
+    fresh: dict[str, dict[str, Any]],
+) -> None:
+    """Copy the cached entry when mtime+size match; otherwise re-read the file."""
+    relative = relative_to_root(root, path)
+    entry = cached.get(relative)
+    st = path.stat()
+    if (
+        isinstance(entry, dict)
+        and isinstance(entry.get("sha256"), str)
+        and entry.get("mtime_ns") == st.st_mtime_ns
+        and entry.get("size") == st.st_size
+    ):
+        fresh[relative] = entry
+    else:
+        fresh[relative] = {
+            "sha256": artifact_digest(root, path),
+            "mtime_ns": st.st_mtime_ns,
+            "size": st.st_size,
+        }
+
+
+def current_revision(
+    root: Path, snapshot: dict[str, Any]
+) -> tuple[str, dict[str, str]]:
+    """Fast recompute of (revision, top-level digests) for a stored snapshot.
+
+    Files whose (mtime_ns, size) match the cached manifest reuse their cached
+    content digest; only changed or new files are re-read. This detects
+    accidental drift, not a tamper-proof rewrite: a change that preserves both
+    mtime and size is not observed.
+    """
+    files = snapshot.get("files")
+    paths = canonical_snapshot_paths(root, snapshot["paths"])
+    if not isinstance(files, dict) or not files:
+        revision, _, digests, _ = snapshot_manifest(root, snapshot["paths"])
+        return revision, digests
+    fresh: dict[str, dict[str, Any]] = {}
+    for path in paths:
+        if path.is_file():
+            _refresh_file(root, path, files, fresh)
+        else:
+            for child in sorted(item for item in path.rglob("*") if item.is_file()):
+                _refresh_file(root, child, files, fresh)
+    digests = {
+        relative_to_root(root, path): _digest_from_manifest(root, path, fresh)
+        for path in paths
+    }
+    return _revision_from_digests(digests), digests
 
 
 def scoped_file_manifest(root: Path, values: list[str]) -> dict[str, str]:
@@ -1703,7 +1829,7 @@ def verify_current_revision(root: Path, state: dict[str, Any], revision: str) ->
     snapshot = state.get("artifacts", {}).get(revision)
     if not isinstance(snapshot, dict) or not isinstance(snapshot.get("paths"), list):
         raise FlowError(f"revision is absent from artifact ledger: {revision}")
-    observed, _, digests = snapshot_manifest(root, snapshot["paths"])
+    observed, digests = current_revision(root, snapshot)
     if observed != revision or digests != snapshot.get("digests"):
         raise FlowError(f"workspace no longer matches revision {revision}")
 
@@ -2058,6 +2184,7 @@ def evaluate_phase_gate(
         )
         if not reviews:
             return ["PREFLIGHT gate requires an approved V-plan review"]
+        missing_approval = False
         for review in reviews:
             parent = state["tasks"].get(review.get("parent_task_id"))
             origin = find_task_ancestor(
@@ -2073,7 +2200,7 @@ def evaluate_phase_gate(
             if not (
                 parent
                 and parent.get("role") == "builder"
-                and parent.get("action") in {"WRITE_VPLAN", "APPLY_REVIEW_FIX"}
+                and parent.get("action") in {"WRITE_VPLAN", "APPLY_PLAN_EDITS", "APPLY_REVIEW_FIX"}
                 and parent.get("status") == "COMPLETED"
                 and parent.get("outcome") == "READY_FOR_REVIEW"
                 and parent.get("output_revision") == review.get("input_revision")
@@ -2082,11 +2209,25 @@ def evaluate_phase_gate(
                 continue
             candidate = json.loads(json.dumps(state))
             errors = materialize_plan(root, candidate, review)
-            if not errors:
-                state.clear()
-                state.update(candidate)
-                verify_current_revision(root, state, review["input_revision"])
-                return []
+            if errors:
+                continue
+            accepted_revision = candidate["accepted_revision"]
+            approvals = [
+                item
+                for item in candidate["approvals"]
+                if item.get("gate") == "VPLAN"
+                and item.get("decision") == "APPROVED"
+                and item.get("revision") == accepted_revision
+            ]
+            if not approvals:
+                missing_approval = True
+                continue
+            state.clear()
+            state.update(candidate)
+            verify_current_revision(root, state, review["input_revision"])
+            return []
+        if missing_approval:
+            return ["PREFLIGHT gate requires a human VPLAN approval on the accepted plan revision"]
         return ["PREFLIGHT gate rejected every approved V-plan review as stale or invalid"]
     if target == "SMOKE":
         revision = state.get("accepted_revision")
@@ -2107,11 +2248,26 @@ def evaluate_phase_gate(
         )
         for smoke in smoke_runs:
             revision = smoke.get("input_revision")
-            compile_id = smoke.get("parent_task_id")
-            compile_task = state["tasks"].get(compile_id) if compile_id else None
-            review_id = compile_task.get("parent_task_id") if compile_task else None
+            try:
+                checked_task_result(root, smoke)
+                smoke_request = checked_task_request(root, smoke)
+            except FlowError:
+                continue
+            build_and_run = bool(
+                (smoke_request.get("context") or {}).get("build_and_run")
+            )
+            if build_and_run:
+                # Single build-and-run command: RUN_CASE -> REVIEW -> BUILD. The
+                # command provably rebuilt the sealed filelist and ran the smoke
+                # sim, so PASS implies compile/elaboration also passed.
+                review_id = smoke.get("parent_task_id")
+                compile_task = None
+            else:
+                compile_id = smoke.get("parent_task_id")
+                compile_task = state["tasks"].get(compile_id) if compile_id else None
+                review_id = compile_task.get("parent_task_id") if compile_task else None
             review = state["tasks"].get(review_id) if review_id else None
-            if not compile_task or not review:
+            if not review:
                 continue
             build_id = review.get("parent_task_id")
             build = state["tasks"].get(build_id) if build_id else None
@@ -2136,32 +2292,41 @@ def evaluate_phase_gate(
                 and build.get("output_revision") == revision
                 and origin
                 and review.get("parent_task_id") == build.get("task_id")
-                and
-                compile_task.get("role") == "runner"
-                and compile_task.get("action") == "COMPILE_ELAB"
-                and compile_task.get("phase") == "SMOKE"
-                and compile_task.get("status") == "COMPLETED"
-                and compile_task.get("outcome") == "PASS"
                 and review.get("role") == "reviewer"
                 and review.get("action") in {"REVIEW_TB", "REVIEW_FIX"}
                 and review.get("status") == "COMPLETED"
                 and review.get("outcome") == "APPROVED"
-                and compile_task.get("input_revision") == revision
                 and review.get("input_revision") == revision
             ):
                 continue
+            if build_and_run:
+                compile_ok = True
+            else:
+                compile_ok = (
+                    compile_task is not None
+                    and compile_task.get("role") == "runner"
+                    and compile_task.get("action") == "COMPILE_ELAB"
+                    and compile_task.get("phase") == "SMOKE"
+                    and compile_task.get("status") == "COMPLETED"
+                    and compile_task.get("outcome") == "PASS"
+                    and compile_task.get("input_revision") == revision
+                )
+            if not compile_ok:
+                continue
             try:
-                checked_task_result(root, smoke)
-                checked_task_result(root, compile_task)
                 checked_task_result(root, review)
                 checked_task_result(root, build)
+                if compile_task is not None:
+                    checked_task_result(root, compile_task)
                 verify_current_revision(root, state, revision)
             except FlowError:
                 continue
             state["accepted_revision"] = revision
             return []
         return [
-            "FEATURES gate requires chained static review -> compile/elaboration -> smoke PASS on one revision"
+            "FEATURES gate requires a reviewed smoke PASS on one revision: "
+            "either chained COMPILE_ELAB -> RUN_CASE, or a single build-and-run "
+            "RUN_CASE with context.build_and_run"
         ]
     if target in {"RANDOM", "COVERAGE"}:
         errors = require_directed_completion(root, state)
@@ -2319,7 +2484,7 @@ def evaluate_phase_gate(
             return ["SIGNOFF gate requires a frozen revision from the coverage gate"]
         if any(item.get("status") == "OPEN" for item in state["blockers"]):
             return ["SIGNOFF gate has open blockers"]
-        if any(item.get("status") != "RESOLVED" for item in state["fix_requests"]):
+        if state["fix_requests"]:
             return ["SIGNOFF gate has unresolved DUT fix requests"]
         mandatory = mandatory_work_item_ids(state)
         regressions = completed_tasks(
@@ -2353,7 +2518,7 @@ def evaluate_phase_gate(
             return ["COMPLETE gate has unresolved mandatory items: " + ", ".join(unresolved_items)]
         if any(item.get("status") == "OPEN" for item in state["blockers"]):
             return ["COMPLETE gate has open blockers"]
-        if any(item.get("status") != "RESOLVED" for item in state["fix_requests"]):
+        if state["fix_requests"]:
             return ["COMPLETE gate has unresolved DUT fix requests"]
         regressions = completed_tasks(
             state,
@@ -2453,23 +2618,19 @@ def cmd_init(args: argparse.Namespace) -> None:
     spec_path = resolve_path(root, args.spec)
     rtl_filelist_path = resolve_path(root, args.rtl_filelist)
     for label, input_path in (("spec", spec_path), ("rtl filelist", rtl_filelist_path)):
-        relative_to_root(root, input_path)
         if not input_path.is_file():
             raise FlowError(f"{label} does not exist: {input_path}")
     rtl_roots = [resolve_path(root, value) for value in args.rtl_root]
     if len(set(rtl_roots)) != len(rtl_roots):
         raise FlowError("--rtl-root values must be unique")
     for rtl_root in rtl_roots:
-        relative_to_root(root, rtl_root)
         if not rtl_root.exists():
             raise FlowError(f"RTL root does not exist: {rtl_root}")
         if rtl_root == root:
             raise FlowError("RTL root must be narrower than the project root")
         if paths_overlap(rtl_root, flow_dir(root)):
             raise FlowError(f"RTL root must not overlap .dv: {rtl_root}")
-    baseline_revision, baseline_paths, baseline_digests = snapshot_manifest(
-        root, [str(spec_path), str(rtl_filelist_path), *(str(path) for path in rtl_roots)]
-    )
+    baseline_revision, baseline_paths, baseline_digests, baseline_files = snapshot_manifest(root, [])
     timestamp = now()
     state: dict[str, Any] = {
         "schema_version": FLOW_SCHEMA,
@@ -2478,7 +2639,7 @@ def cmd_init(args: argparse.Namespace) -> None:
         "created_at": timestamp,
         "updated_at": timestamp,
         "design": {
-            "name": args.design_name,
+            "name": args.dut_name,
             "spec": str(spec_path),
             "rtl_filelist": str(rtl_filelist_path),
             "rtl_roots": [str(path) for path in rtl_roots],
@@ -2497,6 +2658,7 @@ def cmd_init(args: argparse.Namespace) -> None:
                 "producer_task_ids": [],
                 "paths": baseline_paths,
                 "digests": baseline_digests,
+                "files": baseline_files,
                 "recorded_at": timestamp,
             }
         },
@@ -2614,10 +2776,10 @@ def cmd_new_task(args: argparse.Namespace) -> None:
         "request_sha256": None,
         "result_sha256": None,
         "protected_paths": [
-            relative_to_root(root, resolve_path(root, state["design"]["spec"])),
-            relative_to_root(root, resolve_path(root, state["design"]["rtl_filelist"])),
+            str(resolve_path(root, state["design"]["spec"])),
+            str(resolve_path(root, state["design"]["rtl_filelist"])),
             *[
-                relative_to_root(root, resolve_path(root, value))
+                str(resolve_path(root, value))
                 for value in state["design"]["rtl_roots"]
             ],
         ],
@@ -2661,11 +2823,11 @@ def cmd_seal_task(args: argparse.Namespace) -> None:
                 "revision_paths must exactly equal the input artifact paths"
                 + (" plus builder write roots" if task["role"] == "builder" else "")
             )
-        current_revision, _, _ = snapshot_manifest(root, input_snapshot["paths"])
-        if current_revision != task["input_revision"]:
+        observed_revision, _ = current_revision(root, input_snapshot)
+        if observed_revision != task["input_revision"]:
             raise FlowError(
                 f"input revision drifted before dispatch: expected {task['input_revision']}, "
-                f"observed {current_revision}"
+                f"observed {observed_revision}"
             )
     write_scope = request["scope"]["write"]
     task["write_scope_before"] = (
@@ -2842,7 +3004,7 @@ def cmd_record_result(args: argparse.Namespace) -> None:
                     errors.append(f"read-only snapshot path drifted: {relative}")
         else:
             try:
-                observed_revision, _, _ = snapshot_manifest(root, snapshot["paths"])
+                observed_revision, _ = current_revision(root, snapshot)
             except FlowError as exc:
                 errors.append(str(exc))
             else:
@@ -2870,7 +3032,7 @@ def cmd_record_result(args: argparse.Namespace) -> None:
             if not any(paths_overlap(resolve_path(root, value), write_root) for write_root in write_roots)
         ]
         revision_values.extend(write_scope_after)
-        output_revision, snapshot_paths, snapshot_digests = snapshot_manifest(
+        output_revision, snapshot_paths, snapshot_digests, snapshot_files = snapshot_manifest(
             root, revision_values
         )
     else:
@@ -2896,6 +3058,7 @@ def cmd_record_result(args: argparse.Namespace) -> None:
                 "producer_task_ids": [args.task_id],
                 "paths": snapshot_paths,
                 "digests": snapshot_digests,
+                "files": snapshot_files,
                 "recorded_at": now(),
             }
         else:
@@ -2977,7 +3140,6 @@ def cmd_set_item(args: argparse.Namespace) -> None:
         raise FlowError(f"waiving {args.item_id} requires a WORK_ITEM:{args.item_id} approval")
     if args.status == "WAIVED" and any(
         args.item_id in request.get("affected_ids", [])
-        and request.get("status") != "RESOLVED"
         for request in state["fix_requests"]
     ):
         raise FlowError("a confirmed DUT fix request cannot be waived into signoff")
@@ -3096,15 +3258,6 @@ def cmd_set_item(args: argparse.Namespace) -> None:
         ]
         if unresolved:
             raise FlowError("PASSED item has unresolved dependencies: " + ", ".join(unresolved))
-        rtl_fix = next(
-            (
-                request for request in state["fix_requests"]
-                if args.item_id in request.get("affected_ids", [])
-                and request.get("status") == "RTL_UPDATED_PENDING_VERIFY"
-                and request.get("rtl_revision") == task["input_revision"]
-            ),
-            None,
-        )
         review_candidates = completed_tasks(
             state, role="reviewer", outcome="APPROVED", revision=task["input_revision"]
         )
@@ -3120,13 +3273,13 @@ def cmd_set_item(args: argparse.Namespace) -> None:
                 checked_task_result(root, review)
                 matching_review = review
                 break
-        if matching_review is None and rtl_fix is None:
+        if matching_review is None:
             raise FlowError("PASSED requires an approved static review for this item and revision")
         matching_builder = (
             state["tasks"].get(matching_review.get("parent_task_id"))
             if matching_review is not None else None
         )
-        if rtl_fix is None and not (
+        if not (
             matching_builder
             and matching_builder.get("role") == "builder"
             and matching_builder.get("status") == "COMPLETED"
@@ -3135,55 +3288,47 @@ def cmd_set_item(args: argparse.Namespace) -> None:
             and matching_builder.get("task_id") == builder_task_id
         ):
             raise FlowError("PASSED requires the item's exact builder -> reviewer lineage")
-        if rtl_fix is not None:
-            diagnosis = state["tasks"].get(rtl_fix.get("diagnosis_task_id"))
-            diagnosis_result = checked_task_result(root, diagnosis) if diagnosis else {}
-            rerun = diagnosis_result.get("payload", {}).get("rerun", {})
-            actual_run = result.get("payload", {}).get("run", {})
-            if task["action"] == "RUN_CASE":
-                exact_rerun = (
-                    actual_run.get("test") == rerun.get("test")
-                    and actual_run.get("seed") == rerun.get("seed")
-                )
-            else:
-                exact_rerun = any(
-                    isinstance(case, dict)
-                    and case.get("test") == rerun.get("test")
-                    and case.get("seed") == rerun.get("seed")
-                    and case.get("outcome") == "PASS"
-                    for case in result.get("payload", {}).get("case_results", [])
-                )
-            if not exact_rerun:
-                raise FlowError("RTL fix must rerun the debugger's exact test and seed")
-        else:
-            diagnosis = find_task_ancestor(
-                state,
-                matching_builder,
-                lambda ancestor: (
-                    ancestor.get("role") == "debugger"
-                    and ancestor.get("status") == "COMPLETED"
-                    and ancestor.get("outcome") == "DIAGNOSED"
-                ),
+        diagnosis: dict[str, Any] | None = None
+        diagnosis_rerun: dict[str, Any] | None = None
+        seen_ancestors: set[str] = set()
+        current_ancestor: dict[str, Any] | None = matching_builder
+        while isinstance(current_ancestor, dict):
+            ancestor_id = current_ancestor.get("task_id")
+            if not isinstance(ancestor_id, str) or ancestor_id in seen_ancestors:
+                break
+            seen_ancestors.add(ancestor_id)
+            if (
+                current_ancestor.get("role") == "runner"
+                and current_ancestor.get("status") == "COMPLETED"
+                and current_ancestor.get("outcome") in RUNNER_FAILURE_OUTCOMES
+            ):
+                ancestor_result = checked_task_result(root, current_ancestor)
+                embedded = ancestor_result.get("payload", {}).get("diagnosis")
+                if isinstance(embedded, dict) and embedded.get("state") == "DIAGNOSED":
+                    diagnosis = current_ancestor
+                    diagnosis_rerun = embedded.get("rerun", {})
+                    break
+            parent_id = current_ancestor.get("parent_task_id")
+            current_ancestor = (
+                state["tasks"].get(parent_id) if isinstance(parent_id, str) else None
             )
-        if rtl_fix is None and diagnosis is not None:
-            diagnosis_result = checked_task_result(root, diagnosis)
-            rerun = diagnosis_result.get("payload", {}).get("rerun", {})
+        if diagnosis is not None:
             actual_run = result.get("payload", {}).get("run", {})
             if task["action"] == "RUN_CASE":
                 exact_rerun = (
-                    actual_run.get("test") == rerun.get("test")
-                    and actual_run.get("seed") == rerun.get("seed")
+                    actual_run.get("test") == diagnosis_rerun.get("test")
+                    and actual_run.get("seed") == diagnosis_rerun.get("seed")
                 )
             else:
                 exact_rerun = any(
                     isinstance(case, dict)
-                    and case.get("test") == rerun.get("test")
-                    and case.get("seed") == rerun.get("seed")
+                    and case.get("test") == diagnosis_rerun.get("test")
+                    and case.get("seed") == diagnosis_rerun.get("seed")
                     and case.get("outcome") == "PASS"
                     for case in result.get("payload", {}).get("case_results", [])
                 )
             if not exact_rerun:
-                raise FlowError("debug fix must rerun the debugger's exact test and seed")
+                raise FlowError("debug fix must rerun the diagnosed failure's exact test and seed")
         if matching_review is not None:
             review_task_id = matching_review["task_id"]
         verify_current_revision(root, state, task["input_revision"])
@@ -3274,36 +3419,25 @@ def cmd_add_fix_request(args: argparse.Namespace) -> None:
     require_mutable_state(state)
     if args.failure_task_id not in state["tasks"]:
         raise FlowError(f"unknown failure task: {args.failure_task_id}")
-    if args.diagnosis_task_id not in state["tasks"]:
-        raise FlowError(f"unknown diagnosis task: {args.diagnosis_task_id}")
     failure = state["tasks"][args.failure_task_id]
-    diagnosis = state["tasks"][args.diagnosis_task_id]
-    failure_outcomes = {
-        "COMPILE_ERROR", "ELABORATION_ERROR", "SIMULATION_FAILURE", "TIMEOUT"
-    }
     if not (
         failure.get("role") == "runner"
         and failure.get("status") == "COMPLETED"
-        and failure.get("outcome") in failure_outcomes
+        and failure.get("outcome") in RUNNER_FAILURE_OUTCOMES
     ):
         raise FlowError("fix request failure task must be a completed failing runner task")
+    failure_result = checked_task_result(root, failure)
+    diagnosis = failure_result.get("payload", {}).get("diagnosis")
     if not (
-        diagnosis.get("role") == "debugger"
-        and diagnosis.get("status") == "COMPLETED"
-        and diagnosis.get("outcome") == "DIAGNOSED"
-        and diagnosis.get("parent_task_id") == failure["task_id"]
-        and diagnosis.get("input_revision") == failure.get("input_revision")
+        isinstance(diagnosis, dict)
+        and diagnosis.get("classification") == "DUT_BUG"
+        and diagnosis.get("route_to") == "RTL_OWNER"
+        and diagnosis.get("confidence") in {"HIGH", "MEDIUM"}
     ):
-        raise FlowError("fix request diagnosis must be chained to the failure on the same revision")
-    checked_task_result(root, failure)
-    diagnosis_result = checked_task_result(root, diagnosis)
-    diagnosis_payload = diagnosis_result.get("payload", {})
-    if not (
-        diagnosis_payload.get("classification") == "DUT_BUG"
-        and diagnosis_payload.get("route_to") == "RTL_OWNER"
-        and diagnosis_payload.get("confidence") in {"HIGH", "MEDIUM"}
-    ):
-        raise FlowError("fix request requires a non-low-confidence DUT_BUG diagnosis")
+        raise FlowError(
+            "fix request requires a non-low-confidence DUT_BUG diagnosis "
+            "embedded in the failing runner result"
+        )
     affected_ids = args.affected_id or []
     if not affected_ids:
         raise FlowError("fix request requires at least one --affected-id")
@@ -3317,21 +3451,17 @@ def cmd_add_fix_request(args: argparse.Namespace) -> None:
         "status": "OPEN",
         "classification": "DUT_BUG",
         "failure_task_id": args.failure_task_id,
-        "diagnosis_task_id": args.diagnosis_task_id,
         "summary": args.summary,
         "affected_ids": affected_ids,
         "evidence": args.evidence or [],
         "previous_revision": failure["input_revision"],
-        "rtl_revision": None,
-        "external_ref": None,
-        "verification_task_id": None,
         "created_at": now(),
         "updated_at": now(),
     }
     for item_id in affected_ids:
         item = state["work_items"][item_id]
         item["status"] = "BLOCKED_DUT"
-        item["last_task_id"] = diagnosis["task_id"]
+        item["last_task_id"] = failure["task_id"]
         item["reason"] = f"Blocked by confirmed DUT fix request {identifier}."
         item["updated_at"] = now()
     state["fix_requests"].append(entry)
@@ -3339,132 +3469,12 @@ def cmd_add_fix_request(args: argparse.Namespace) -> None:
     print(identifier)
 
 
-def cmd_accept_rtl_update(args: argparse.Namespace) -> None:
-    root = project_root(args.root)
-    state = load_state(root)
-    require_mutable_state(state)
-    entry = next(
-        (item for item in state["fix_requests"] if item["id"] == args.fix_request_id),
-        None,
-    )
-    if not entry:
-        raise FlowError(f"unknown fix request: {args.fix_request_id}")
-    if entry["status"] != "OPEN":
-        raise FlowError(f"fix request is not awaiting an RTL update: {args.fix_request_id}")
-    if state.get("accepted_revision") != args.expected_revision:
-        raise FlowError("accepted revision changed; refuse a stale RTL update")
-    snapshot = state["artifacts"].get(args.expected_revision)
-    if not snapshot:
-        raise FlowError("expected revision is absent from the artifact ledger")
-    new_revision, paths, digests = snapshot_manifest(root, snapshot["paths"])
-    if new_revision == args.expected_revision:
-        raise FlowError("RTL update did not change the accepted snapshot")
-    rtl_roots = [
-        resolve_path(root, state["design"]["rtl_filelist"]),
-        *(resolve_path(root, value) for value in state["design"]["rtl_roots"]),
-    ]
-    changed_rtl = False
-    for relative, previous_digest in snapshot["digests"].items():
-        path = resolve_path(root, relative)
-        is_rtl = any(paths_overlap(path, rtl_root) for rtl_root in rtl_roots)
-        changed = digests.get(relative) != previous_digest
-        if changed and not is_rtl:
-            raise FlowError(f"non-RTL snapshot path changed during RTL update: {relative}")
-        changed_rtl = changed_rtl or (changed and is_rtl)
-    if not changed_rtl:
-        raise FlowError("accepted snapshot changed, but no protected RTL root changed")
-    state["artifacts"][new_revision] = {
-        "producer_task_id": None,
-        "producer_task_ids": [],
-        "paths": paths,
-        "digests": digests,
-        "recorded_at": now(),
-    }
-    state["accepted_revision"] = new_revision
-    state["frozen_revision"] = None
-    entry["status"] = "RTL_UPDATED_PENDING_VERIFY"
-    entry["previous_revision"] = args.expected_revision
-    entry["rtl_revision"] = new_revision
-    entry["external_ref"] = args.external_ref
-    entry["updated_at"] = now()
-    for item_id in entry["affected_ids"]:
-        item = state["work_items"][item_id]
-        if item.get("status") == "BLOCKED_DUT":
-            item["status"] = "READY_TO_RUN"
-            item["reason"] = (
-                f"RTL update for {entry['id']} preserves the reviewed TB and awaits "
-                "the debugger's exact rerun."
-            )
-            item["updated_at"] = now()
-    save_state(
-        root,
-        state,
-        "RTL_UPDATE_ACCEPTED",
-        {"fix_request_id": entry["id"], "revision": new_revision},
-    )
-    print(new_revision)
-
-
-def cmd_resolve_fix_request(args: argparse.Namespace) -> None:
-    root = project_root(args.root)
-    state = load_state(root)
-    require_mutable_state(state)
-    entry = next((item for item in state["fix_requests"] if item["id"] == args.fix_request_id), None)
-    if not entry:
-        raise FlowError(f"unknown fix request: {args.fix_request_id}")
-    if entry["status"] != "RTL_UPDATED_PENDING_VERIFY":
-        raise FlowError(f"fix request has no accepted RTL update to verify: {args.fix_request_id}")
-    task = state["tasks"].get(args.verification_task_id)
-    if not task:
-        raise FlowError(f"unknown verification task: {args.verification_task_id}")
-    if not (
-        task.get("role") == "runner"
-        and task.get("action") == "RUN_REGRESSION"
-        and task.get("status") == "COMPLETED"
-        and task.get("outcome") == "PASS"
-        and task.get("input_revision") == entry.get("rtl_revision")
-    ):
-        raise FlowError(
-            "fix resolution requires an affected cumulative regression on the RTL revision"
-        )
-    result = checked_task_result(root, task)
-    request = checked_task_request(root, task)
-    check_regression_task(
-        root,
-        task,
-        scope_name="CUMULATIVE",
-        required_work_items=set(entry["affected_ids"]),
-    )
-    diagnosis = state["tasks"].get(entry["diagnosis_task_id"])
-    diagnosis_result = checked_task_result(root, diagnosis) if diagnosis else {}
-    rerun = diagnosis_result.get("payload", {}).get("rerun", {})
-    if not any(
-        isinstance(case, dict)
-        and case.get("test") == rerun.get("test")
-        and case.get("seed") == rerun.get("seed")
-        and case.get("outcome") == "PASS"
-        for case in result.get("payload", {}).get("case_results", [])
-    ):
-        raise FlowError("DUT fix regression does not include the debugger's exact reproducer")
-    if any(
-        state["work_items"][item_id].get("status") != "PASSED"
-        for item_id in entry["affected_ids"]
-    ):
-        raise FlowError("affected work items must complete review and rerun before fix resolution")
-    entry["status"] = "RESOLVED"
-    entry["resolution"] = args.resolution
-    entry["verification_task_id"] = task["task_id"]
-    entry["updated_at"] = now()
-    save_state(root, state, "FIX_REQUEST_RESOLVED", {"fix_request_id": args.fix_request_id})
-    print(args.fix_request_id)
-
-
 def cmd_approve(args: argparse.Namespace) -> None:
     root = project_root(args.root)
     state = load_state(root)
     require_mutable_state(state)
-    if args.gate == "SIGNOFF" and args.decision == "APPROVED" and not args.revision:
-        raise FlowError("approved SIGNOFF requires --revision")
+    if args.gate in {"SIGNOFF", "VPLAN"} and args.decision == "APPROVED" and not args.revision:
+        raise FlowError(f"approved {args.gate} requires --revision")
     entry = {
         "gate": args.gate,
         "decision": args.decision,
@@ -3498,8 +3508,8 @@ def parser() -> argparse.ArgumentParser:
     commands = root_parser.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="initialize a new .dv workflow")
-    init.add_argument("--root", required=True)
-    init.add_argument("--design-name", required=True)
+    init.add_argument("--root", required=True, help="verification project root; .dv/ state and verification assets live here")
+    init.add_argument("--dut-name", required=True, help="short identifier for the design under test")
     init.add_argument("--spec", required=True)
     init.add_argument("--rtl-filelist", required=True)
     init.add_argument(
@@ -3509,7 +3519,7 @@ def parser() -> argparse.ArgumentParser:
         help="protected RTL source file or directory; repeat for multiple roots",
     )
     init.add_argument("--top", required=True)
-    init.add_argument("--priority-order", default="P1,P2,P3")
+    init.add_argument("--priority-order", default="P0,P1,P2")
     init.set_defaults(func=cmd_init)
 
     new_task = commands.add_parser("new-task", help="create an immutable task draft")
@@ -3574,28 +3584,10 @@ def parser() -> argparse.ArgumentParser:
     add_fix = commands.add_parser("add-fix-request", help="record a confirmed DUT bug")
     add_fix.add_argument("--root", required=True)
     add_fix.add_argument("--failure-task-id", required=True)
-    add_fix.add_argument("--diagnosis-task-id", required=True)
     add_fix.add_argument("--summary", required=True)
     add_fix.add_argument("--affected-id", action="append")
     add_fix.add_argument("--evidence", action="append")
     add_fix.set_defaults(func=cmd_add_fix_request)
-
-    accept_rtl = commands.add_parser(
-        "accept-rtl-update",
-        help="record an external RTL update for an open DUT fix request",
-    )
-    accept_rtl.add_argument("--root", required=True)
-    accept_rtl.add_argument("--fix-request-id", required=True)
-    accept_rtl.add_argument("--expected-revision", required=True)
-    accept_rtl.add_argument("--external-ref", required=True)
-    accept_rtl.set_defaults(func=cmd_accept_rtl_update)
-
-    resolve_fix = commands.add_parser("resolve-fix-request", help="resolve an open DUT fix request")
-    resolve_fix.add_argument("--root", required=True)
-    resolve_fix.add_argument("--fix-request-id", required=True)
-    resolve_fix.add_argument("--verification-task-id", required=True)
-    resolve_fix.add_argument("--resolution", required=True)
-    resolve_fix.set_defaults(func=cmd_resolve_fix_request)
 
     approve = commands.add_parser("approve", help="record an explicit human gate decision")
     approve.add_argument("--root", required=True)

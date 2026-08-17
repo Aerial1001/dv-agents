@@ -58,7 +58,7 @@ class RepositoryValidationTests(unittest.TestCase):
                 / "references"
             )
             schema_dir.mkdir(parents=True)
-            roles = ["builder", "reviewer", "runner", "debugger"]
+            roles = ["builder", "reviewer", "runner"]
             base = {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",

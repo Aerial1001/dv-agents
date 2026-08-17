@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "chip-design-verification",
-      "description": "A stateful DV workflow with builder, reviewer, runner, and debugger workers",
+      "description": "A stateful DV workflow with builder, reviewer, and runner workers (the runner also owns failure diagnosis)",
       "source": "./plugins/verification",
       "strict": true
     }

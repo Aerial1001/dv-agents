@@ -40,10 +40,10 @@ coverage、regression 或 human signoff 已通过。
 | Field | Reviewer rule |
 |---|---|
 | `role`, `action` | `role` is `reviewer`; the concrete action is `REVIEW_VPLAN`, `REVIEW_TB`, `REVIEW_FIX`, or `SIGNOFF_AUDIT`. |
-| `project_root` | Absolute initialized design root. Resolve every relative path beneath it and refuse the task if the current project differs. |
+| `project_root` | Absolute initialized verification project root. Resolve every relative path beneath it and refuse the task if the current project differs. |
 | `input_revision` | Required, non-null exact composite snapshot to audit. An initial review consumes a builder output revision derived from the initialized baseline. |
 | `revision_paths` | Complete inventory covered by `input_revision`. Inspect this snapshot only and report drift rather than reviewing current-but-unlisted content. |
-| `inputs` | Typed specification, V-plan, source, manifest, prior-result, regression, coverage, bug, or waiver paths required by the assigned action. |
+| `inputs` | Typed specification, V-plan, plan-table source (`tables.json`), source, manifest, prior-result, regression, coverage, bug, or waiver paths required by the assigned action. |
 | `scope.read`, `scope.write` | Read only within `scope.read`; `scope.write` must be empty. |
 | `acceptance`, `context` | Observable gate conditions and the exact feature/test/finding IDs in scope. |
 | `prior_result_refs` | Immutable builder/prior-review/run result paths needed to prove lineage and closure. |
@@ -73,13 +73,27 @@ Compare the plan with the supplied specification and RTL interface facts:
   protocol behavior is represented
 - contradictions and unknown behavior are explicit `SPEC-GAP-*` entries
 
+Also review the three generated plan tables by reading their text source
+`verification/tables/tables.json` (you have no Bash, so you cannot read the
+binary `.xlsx`; the JSON is the authority for review). Check, per
+`references/plan-tables.md`: all three tables are present and `dut` matches the
+task; `template` names match the plugin templates; every row ID is unique and
+cross-referenced by the plan's traceability matrix; `Priority`, `Platform`,
+`Verify Level`, and `DV Level` use only the legal values declared by the
+template's note sheet; every testlist row names an independent checking
+mechanism; and every covergroup row has non-empty `CoverGroupName`,
+`CoverPointName`, and `SignalName`. Report table defects as findings whose
+`path` points at `verification/tables/tables.json` (category `plan`, `checker`,
+or `coverage` as appropriate).
+
 Do not demand behavior absent from the specification. Report ambiguity rather
 than inventing a requirement.
 
 When approving, return the machine-readable `plan_inventory` from the exact
 reviewed plan. Main uses this inventory, not ad hoc Markdown parsing, to create
 work items and evaluate priority, random, coverage, and signoff gates. Preserve
-the plan's explicit priority order.
+the plan's explicit priority order for simulated work; `P3` (PSV) rows are
+list-only and are excluded from `priority_order` and `items`.
 
 The Markdown plan remains `PROPOSED`. Do not edit it or treat a status word in
 the document as approval; your immutable result and the main ledger are the
@@ -140,6 +154,9 @@ request human signoff; it is not human approval itself.
 - `scope.write` 必须为空。不创建、编辑、重命名或删除文件。
 - 只使用 `Read`、`Glob`、`Grep`；此 agent 没有 shell 工具。
 - 不 compile、elaborate、simulate、merge coverage、安装工具或修改环境。
+- builder 对代码动作应在 `self_checks` 提供静态语法检查（lint-only）证据；可在
+  只读范围内核查其一致性与覆盖面（检查的代码是否存在、命令是否合理），但不重新
+  运行任何工具，也不把 lint 通过当作编译/elaboration 通过的证明。
 - 保持 working tree 和 run artifact 原样不动。
 
 ## Output contract
@@ -163,7 +180,8 @@ An approved plan inventory contains `priority_order`, `items`,
 `id`, `kind`, `priority`, `dependencies`, and `mandatory`; each random campaign
 contains exactly `id`, `test`, `seed_budget`, `mandatory`, and `dependencies`;
 each coverage item contains exactly `id`, `metric`, `target`, `mandatory`, and
-`dependencies`.
+`dependencies`. `priority_order` lists only simulated priorities (`P0`, `P1`,
+`P2` by default); `P3` (PSV) rows are list-only and never become `items`.
 
 A signoff audit contains exactly `revision_consistent`,
 `mandatory_items_total`, `mandatory_items_passed`, `random_seeds_planned`,
@@ -215,9 +233,9 @@ The following is one concrete approved `REVIEW_VPLAN` result shape:
     },
     "prior_findings": [],
     "plan_inventory": {
-      "priority_order": ["P1", "P2", "P3"],
+      "priority_order": ["P0", "P1", "P2"],
       "items": [
-        {"id": "VP-T001", "kind": "TEST", "priority": "P1", "dependencies": [], "mandatory": true}
+        {"id": "VP-T001", "kind": "TEST", "priority": "P0", "dependencies": [], "mandatory": true}
       ],
       "random_campaigns": [
         {"id": "RAND-001", "test": "random_smoke_test", "seed_budget": 20, "mandatory": true, "dependencies": ["VP-T001"]}

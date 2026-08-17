@@ -11,40 +11,50 @@ topology and a durable workflow state.
                                ^
                                |
 verification-reviewer <-- main session --> verification-runner
-                               |
-                               v
-                      verification-debugger
 ```
 
 The functional-verification skill runs in the user's main session. There is no
-orchestrator subagent: this keeps builder, reviewer, runner, and debugger at
-subagent depth one. Workers never invoke one another.
+orchestrator subagent: this keeps builder, reviewer, and runner at subagent
+depth one. Workers never invoke one another.
 
 - Main owns `.dv/workflow_state.json`, task dispatch, revisions, gates, retry
   budgets, routing, and human approvals.
 - Builder is the only writer of persistent verification assets.
 - Reviewer performs read-only static plan/code review and signoff audit.
 - Runner executes in isolated `.dv/runs/` directories and reports mechanical
-  outcomes without root-cause guesses.
-- Debugger performs read-only diagnosis and returns a routed fix request.
+  outcomes without root-cause guesses; on a failing result it also embeds the
+  read-only failure diagnosis (`payload.diagnosis`) — execution and analysis
+  are one task/result, not two.
 
 Every worker receives a sealed task from main and returns one structured result
 to main. Worker recommendations are advisory; workers never invoke or message
-one another. `dv_flow.py init` creates a content-addressed baseline revision,
-and all later reviews and runs name an exact composite revision and complete
-path inventory.
+one another. `dv_flow.py init` records the specification, RTL filelist, and
+protected RTL roots as read-only design inputs and creates a content-addressed
+baseline over the verification assets inside the project; all later reviews and
+runs name an exact composite revision and complete path inventory.
 
 ## Workflow
 
 ```text
-V-plan + TB architecture -> plan review
+V-plan + plan tables (testpoint/testlist/covergroups) + TB architecture -> plan review
   -> tool/RTL preflight
   -> TB foundation + smoke -> code review -> compile/elab/smoke
-  -> P1 small batches: build -> review -> targeted run -> cumulative run
+  -> P0 small batches: build -> review -> targeted run -> cumulative run
   -> remaining priority batches
   -> constrained random -> coverage merge/closure
   -> frozen full regression -> signoff audit -> human signoff
 ```
+
+Before writing any TB code, the `WRITE_VPLAN` builder generates three plan tables
+(testpoint, testlist, covergroups) from the xlsx templates shipped under
+`plugins/verification/template/`. It writes a text source
+(`verification/tables/tables.json`) that the reviewer can read, then renders three
+deterministic `.xlsx` files with the dependency-free
+`plugins/verification/scripts/render_tables.py` (subcommands `dump` and
+`render`). The templates are read-only external inputs and are excluded from the
+revision hash; `tables.json` and the rendered `.xlsx` are ordinary verification
+assets tracked in the revision. See `references/plan-tables.md` for the column
+schemas and `tables.json` contract.
 
 A test is complete only after static approval and dynamic pass on the same
 artifact revision. A DUT defect becomes a visible `BLOCKED_DUT` item and fix
@@ -52,17 +62,17 @@ request; it is never silently skipped or counted as pass.
 
 The approving plan reviewer returns a machine-readable inventory of priorities,
 directed items, random campaigns, and coverage targets. Main uses that inventory
-for gates. Each runner task invokes its requested command once; environment or
-diagnostic retries are separate immutable tasks. A successful coverage merge
-with an unmet mandatory target is reported as `COVERAGE_GAP`, then routed by
-main to bounded coverage closure.
+for gates. Each runner task invokes its requested command once and returns the analysis
+in the same result; environment or evidence-collection retries are separate
+immutable tasks. A successful coverage merge with an unmet mandatory target is
+reported as `COVERAGE_GAP`, then routed by main to bounded coverage closure.
 
 ## Local use
 
-Start Claude Code from the design project root with the plugin directory:
+Start Claude Code from the verification project root with the plugin directory:
 
 ```bash
-cd <design-project-root>
+cd <verification-project-root>
 claude --plugin-dir /home/test/work/dv-agents/plugins/verification
 ```
 
@@ -72,19 +82,21 @@ Then invoke:
 /chip-design-verification:functional-verification
 ```
 
-Provide the design root, specification, RTL filelist, every protected RTL source
+Provide the project root, specification, RTL filelist, every protected RTL source
 root, top module, simulator entry point, and clock/reset facts. The skill
-initializes `.dv/` in the design project and resumes it on later sessions. The
+initializes `.dv/` in the verification project and resumes it on later sessions. The
 main session verifies that its working directory equals the sealed
 `project_root` before dispatching workers.
 
-The initialization command protects the specification, filelist, and every RTL
-source root in the baseline revision:
+The initialization command records the specification, RTL filelist, and every
+protected RTL source root as read-only design inputs. They may live outside the
+project root and are deliberately excluded from the content-addressed baseline,
+which tracks only verification assets inside the project:
 
 ```bash
 python3 /home/test/work/dv-agents/plugins/verification/scripts/dv_flow.py init \
   --root "$PWD" \
-  --design-name <name> \
+  --dut-name <name> \
   --spec <spec-path> \
   --rtl-filelist <filelist-path> \
   --rtl-root <rtl-source-file-or-directory> \

@@ -82,7 +82,12 @@
       }
     },
     {
-      "if": {"properties": {"role": {"const": "runner"}}, "required": ["role"]},
+      "if": {
+        "properties": {
+          "role": {"const": "runner"}
+        },
+        "required": ["role"]
+      },
       "then": {
         "properties": {
           "action": {"$ref": "#/$defs/runnerAction"},
@@ -100,19 +105,6 @@
               "INTERNAL_ERROR"
             ]
           }
-        }
-      }
-    },
-    {
-      "if": {"properties": {"role": {"const": "debugger"}}, "required": ["role"]},
-      "then": {
-        "properties": {
-          "action": {"$ref": "#/$defs/debuggerAction"},
-          "issues": {"maxItems": 0},
-          "outcome": {
-            "enum": ["DIAGNOSED", "NEEDS_MORE_EVIDENCE", "BLOCKED", "INTERNAL_ERROR"]
-          },
-          "artifacts": {"maxItems": 0}
         }
       }
     },
@@ -601,25 +593,11 @@
     {
       "if": {
         "properties": {
-          "role": {"const": "debugger"},
-          "agent_status": {"const": "COMPLETED"}
-        },
-        "required": ["role", "agent_status"]
-      },
-      "then": {
-        "properties": {
-          "evidence": {"minItems": 1, "items": {"$ref": "#/$defs/indexedEvidence"}},
-          "issues": {"maxItems": 0},
-          "payload": {"$ref": "#/$defs/debuggerPayload"}
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "role": {"const": "debugger"},
+          "role": {"const": "runner"},
           "agent_status": {"const": "COMPLETED"},
-          "outcome": {"const": "NEEDS_MORE_EVIDENCE"}
+          "outcome": {
+            "enum": ["COMPILE_ERROR", "ELABORATION_ERROR", "SIMULATION_FAILURE", "TIMEOUT"]
+          }
         },
         "required": ["role", "agent_status", "outcome"]
       },
@@ -627,7 +605,7 @@
         "properties": {
           "payload": {
             "properties": {
-              "rerun": {"properties": {"extra_diagnostics": {"minItems": 1}}}
+              "diagnosis": {"$ref": "#/$defs/diagnosisPayload"}
             }
           }
         }
@@ -635,29 +613,51 @@
     },
     {
       "if": {
-        "properties": {"role": {"const": "debugger"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"classification": {"const": "TB_BUG"}}, "required": ["classification"]}},
-        "required": ["role", "agent_status", "payload"]
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "outcome": {
+            "not": {"enum": ["COMPILE_ERROR", "ELABORATION_ERROR", "SIMULATION_FAILURE", "TIMEOUT"]}
+          }
+        },
+        "required": ["role", "agent_status", "outcome"]
       },
-      "then": {"properties": {"payload": {"properties": {"route_to": {"const": "BUILDER"}}}}}
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "diagnosis": {"type": "null"}
+            }
+          }
+        }
+      }
     },
     {
       "if": {
-        "properties": {"role": {"const": "debugger"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"classification": {"const": "TEST_BUG"}}, "required": ["classification"]}},
-        "required": ["role", "agent_status", "payload"]
-      },
-      "then": {"properties": {"payload": {"properties": {"route_to": {"const": "BUILDER"}}}}}
-    },
-    {
-      "if": {
-        "properties": {"role": {"const": "debugger"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"classification": {"const": "DUT_BUG"}}, "required": ["classification"]}},
+        "properties": {
+          "role": {"const": "runner"},
+          "agent_status": {"const": "COMPLETED"},
+          "payload": {
+            "properties": {
+              "diagnosis": {
+                "properties": {"state": {"const": "NEEDS_MORE_EVIDENCE"}},
+                "required": ["state"]
+              }
+            },
+            "required": ["diagnosis"]
+          }
+        },
         "required": ["role", "agent_status", "payload"]
       },
       "then": {
         "properties": {
           "payload": {
             "properties": {
-              "route_to": {"const": "RTL_OWNER"},
-              "confidence": {"enum": ["HIGH", "MEDIUM"]}
+              "diagnosis": {
+                "properties": {
+                  "rerun": {"properties": {"extra_diagnostics": {"minItems": 1}}}
+                }
+              }
             }
           }
         }
@@ -665,24 +665,58 @@
     },
     {
       "if": {
-        "properties": {"role": {"const": "debugger"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"classification": {"const": "SPEC_GAP"}}, "required": ["classification"]}},
+        "properties": {"role": {"const": "runner"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"diagnosis": {"properties": {"classification": {"const": "TB_BUG"}}, "required": ["classification"]}}, "required": ["diagnosis"]}},
         "required": ["role", "agent_status", "payload"]
       },
-      "then": {"properties": {"payload": {"properties": {"route_to": {"const": "HUMAN"}}}}}
+      "then": {"properties": {"payload": {"properties": {"diagnosis": {"properties": {"route_to": {"const": "BUILDER"}}}}}}}
     },
     {
       "if": {
-        "properties": {"role": {"const": "debugger"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"classification": {"enum": ["ENVIRONMENT", "TOOLCHAIN"]}}, "required": ["classification"]}},
+        "properties": {"role": {"const": "runner"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"diagnosis": {"properties": {"classification": {"const": "TEST_BUG"}}, "required": ["classification"]}}, "required": ["diagnosis"]}},
         "required": ["role", "agent_status", "payload"]
       },
-      "then": {"properties": {"payload": {"properties": {"route_to": {"const": "RUNNER"}}}}}
+      "then": {"properties": {"payload": {"properties": {"diagnosis": {"properties": {"route_to": {"const": "BUILDER"}}}}}}}
     },
     {
       "if": {
-        "properties": {"role": {"const": "debugger"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"classification": {"const": "UNKNOWN"}}, "required": ["classification"]}},
+        "properties": {"role": {"const": "runner"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"diagnosis": {"properties": {"classification": {"const": "DUT_BUG"}}, "required": ["classification"]}}, "required": ["diagnosis"]}},
         "required": ["role", "agent_status", "payload"]
       },
-      "then": {"properties": {"payload": {"properties": {"route_to": {"enum": ["RUNNER", "HUMAN"]}}}}}
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "diagnosis": {
+                "properties": {
+                  "route_to": {"const": "RTL_OWNER"},
+                  "confidence": {"enum": ["HIGH", "MEDIUM"]}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"role": {"const": "runner"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"diagnosis": {"properties": {"classification": {"const": "SPEC_GAP"}}, "required": ["classification"]}}, "required": ["diagnosis"]}},
+        "required": ["role", "agent_status", "payload"]
+      },
+      "then": {"properties": {"payload": {"properties": {"diagnosis": {"properties": {"route_to": {"const": "HUMAN"}}}}}}}
+    },
+    {
+      "if": {
+        "properties": {"role": {"const": "runner"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"diagnosis": {"properties": {"classification": {"enum": ["ENVIRONMENT", "TOOLCHAIN"]}}, "required": ["classification"]}}, "required": ["diagnosis"]}},
+        "required": ["role", "agent_status", "payload"]
+      },
+      "then": {"properties": {"payload": {"properties": {"diagnosis": {"properties": {"route_to": {"const": "RUNNER"}}}}}}}
+    },
+    {
+      "if": {
+        "properties": {"role": {"const": "runner"}, "agent_status": {"const": "COMPLETED"}, "payload": {"properties": {"diagnosis": {"properties": {"classification": {"const": "UNKNOWN"}}, "required": ["classification"]}}, "required": ["diagnosis"]}},
+        "required": ["role", "agent_status", "payload"]
+      },
+      "then": {"properties": {"payload": {"properties": {"diagnosis": {"properties": {"route_to": {"enum": ["RUNNER", "HUMAN"]}}}}}}}
     }
   ],
   "$defs": {
@@ -707,13 +741,12 @@
       "uniqueItems": true,
       "items": {"$ref": "#/$defs/path"}
     },
-    "role": {"enum": ["builder", "reviewer", "runner", "debugger"]},
+    "role": {"enum": ["builder", "reviewer", "runner"]},
     "builderAction": {
       "enum": ["WRITE_VPLAN", "BUILD_SMOKE_FOUNDATION", "IMPLEMENT_FEATURE_BATCH", "APPLY_REVIEW_FIX", "APPLY_DEBUG_FIX", "COVERAGE_CLOSURE"]
     },
     "reviewerAction": {"enum": ["REVIEW_VPLAN", "REVIEW_TB", "REVIEW_FIX", "SIGNOFF_AUDIT"]},
     "runnerAction": {"enum": ["PREFLIGHT", "COMPILE_ELAB", "RUN_CASE", "RUN_REGRESSION", "MERGE_COVERAGE"]},
-    "debuggerAction": {"enum": ["DIAGNOSE_FAILURE", "REDIAGNOSE_WITH_EVIDENCE"]},
     "action": {
       "enum": [
         "WRITE_VPLAN",
@@ -730,9 +763,7 @@
         "COMPILE_ELAB",
         "RUN_CASE",
         "RUN_REGRESSION",
-        "MERGE_COVERAGE",
-        "DIAGNOSE_FAILURE",
-        "REDIAGNOSE_WITH_EVIDENCE"
+        "MERGE_COVERAGE"
       ]
     },
     "outcome": {
@@ -748,8 +779,6 @@
         "ELABORATION_ERROR",
         "SIMULATION_FAILURE",
         "TIMEOUT",
-        "DIAGNOSED",
-        "NEEDS_MORE_EVIDENCE",
         "BLOCKED",
         "INTERNAL_ERROR"
       ]
@@ -965,7 +994,7 @@
     "runnerPayload": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tested_revision", "run", "counts", "environment_actions", "failure", "case_results", "coverage_summary"],
+      "required": ["tested_revision", "run", "counts", "environment_actions", "failure", "case_results", "coverage_summary", "diagnosis"],
       "properties": {
         "tested_revision": {"$ref": "#/$defs/revision"},
         "run": {"$ref": "#/$defs/runRecord"},
@@ -978,6 +1007,9 @@
         "case_results": {"type": "array", "items": {"$ref": "#/$defs/caseResult"}},
         "coverage_summary": {
           "oneOf": [{"type": "null"}, {"$ref": "#/$defs/coverageSummary"}]
+        },
+        "diagnosis": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/diagnosisPayload"}]
         }
       }
     },
@@ -1050,11 +1082,12 @@
         "met": {"type": "boolean"}
       }
     },
-    "debuggerPayload": {
+    "diagnosisPayload": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["classification", "subtype", "confidence", "expected", "observed", "root_cause", "suspected_locations", "affected_ids", "route_to", "fix_request", "rerun"],
+      "required": ["state", "classification", "subtype", "confidence", "expected", "observed", "root_cause", "suspected_locations", "affected_ids", "route_to", "fix_request", "rerun"],
       "properties": {
+        "state": {"enum": ["DIAGNOSED", "NEEDS_MORE_EVIDENCE"]},
         "classification": {"enum": ["TB_BUG", "TEST_BUG", "DUT_BUG", "SPEC_GAP", "ENVIRONMENT", "TOOLCHAIN", "UNKNOWN"]},
         "subtype": {"$ref": "#/$defs/nullableString"},
         "confidence": {"enum": ["HIGH", "MEDIUM", "LOW"]},
@@ -1124,12 +1157,6 @@
           "additionalProperties": false,
           "required": ["role", "action", "reason"],
           "properties": {"role": {"const": "runner"}, "action": {"$ref": "#/$defs/runnerAction"}, "reason": {"type": "string"}}
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["role", "action", "reason"],
-          "properties": {"role": {"const": "debugger"}, "action": {"$ref": "#/$defs/debuggerAction"}, "reason": {"type": "string"}}
         }
       ]
     }

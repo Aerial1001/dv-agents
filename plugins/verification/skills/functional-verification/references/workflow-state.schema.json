@@ -232,7 +232,7 @@
       ]
     },
     "role": {
-      "enum": ["builder", "reviewer", "runner", "debugger"]
+      "enum": ["builder", "reviewer", "runner"]
     },
     "action": {
       "enum": [
@@ -250,9 +250,7 @@
         "COMPILE_ELAB",
         "RUN_CASE",
         "RUN_REGRESSION",
-        "MERGE_COVERAGE",
-        "DIAGNOSE_FAILURE",
-        "REDIAGNOSE_WITH_EVIDENCE"
+        "MERGE_COVERAGE"
       ]
     },
     "retryKind": {
@@ -313,8 +311,6 @@
         "ELABORATION_ERROR",
         "SIMULATION_FAILURE",
         "TIMEOUT",
-        "DIAGNOSED",
-        "NEEDS_MORE_EVIDENCE",
         "BLOCKED",
         "INTERNAL_ERROR"
       ]
@@ -487,26 +483,6 @@
                   "RUN_CASE",
                   "RUN_REGRESSION",
                   "MERGE_COVERAGE"
-                ]
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "role": {
-                "const": "debugger"
-              }
-            },
-            "required": ["role"]
-          },
-          "then": {
-            "properties": {
-              "action": {
-                "enum": [
-                  "DIAGNOSE_FAILURE",
-                  "REDIAGNOSE_WITH_EVIDENCE"
                 ]
               }
             }
@@ -705,6 +681,9 @@
             "$ref": "#/$defs/path"
           }
         },
+        "files": {
+          "$ref": "#/$defs/fileManifest"
+        },
         "recorded_at": {
           "$ref": "#/$defs/timestamp"
         }
@@ -718,6 +697,31 @@
       "additionalProperties": {
         "type": "string",
         "pattern": "^sha256:[0-9a-f]{64}$"
+      }
+    },
+    "fileManifest": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/path"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sha256", "mtime_ns", "size"],
+        "properties": {
+          "sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "mtime_ns": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       }
     },
     "statePlanInventory": {
@@ -874,14 +878,10 @@
         "status",
         "classification",
         "failure_task_id",
-        "diagnosis_task_id",
         "summary",
         "affected_ids",
         "evidence",
         "previous_revision",
-        "rtl_revision",
-        "external_ref",
-        "verification_task_id",
         "created_at",
         "updated_at"
       ],
@@ -890,15 +890,12 @@
           "$ref": "#/$defs/identifier"
         },
         "status": {
-          "enum": ["OPEN", "RTL_UPDATED_PENDING_VERIFY", "RESOLVED"]
+          "enum": ["OPEN"]
         },
         "classification": {
           "const": "DUT_BUG"
         },
         "failure_task_id": {
-          "$ref": "#/$defs/identifier"
-        },
-        "diagnosis_task_id": {
           "$ref": "#/$defs/identifier"
         },
         "summary": {
@@ -920,20 +917,11 @@
           }
         },
         "previous_revision": {"$ref": "#/$defs/revision"},
-        "rtl_revision": {"$ref": "#/$defs/nullableRevision"},
-        "external_ref": {
-          "oneOf": [{"type": "null"}, {"type": "string", "minLength": 1}]
-        },
-        "verification_task_id": {"$ref": "#/$defs/nullableIdentifier"},
         "created_at": {
           "$ref": "#/$defs/timestamp"
         },
         "updated_at": {
           "$ref": "#/$defs/timestamp"
-        },
-        "resolution": {
-          "type": "string",
-          "minLength": 1
         }
       }
     },

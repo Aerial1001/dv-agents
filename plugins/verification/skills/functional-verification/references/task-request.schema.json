@@ -98,7 +98,12 @@
       }
     },
     {
-      "if": {"properties": {"role": {"const": "runner"}}, "required": ["role"]},
+      "if": {
+        "properties": {
+          "role": {"const": "runner"}
+        },
+        "required": ["role"]
+      },
       "then": {
         "properties": {
           "action": {"$ref": "#/$defs/runnerAction"},
@@ -134,21 +139,6 @@
         "required": ["role", "action"]
       },
       "then": {"properties": {"input_revision": {"$ref": "#/$defs/revision"}}}
-    },
-    {
-      "if": {"properties": {"role": {"const": "debugger"}}, "required": ["role"]},
-      "then": {
-        "properties": {
-          "action": {"$ref": "#/$defs/debuggerAction"},
-          "input_revision": {"$ref": "#/$defs/revision"},
-          "scope": {
-            "allOf": [
-              {"$ref": "#/$defs/scope"},
-              {"properties": {"write": {"maxItems": 0}}}
-            ]
-          }
-        }
-      }
     }
   ],
   "$defs": {
@@ -164,7 +154,7 @@
     "nullableRevision": {
       "oneOf": [{"$ref": "#/$defs/revision"}, {"type": "null"}]
     },
-    "role": {"enum": ["builder", "reviewer", "runner", "debugger"]},
+    "role": {"enum": ["builder", "reviewer", "runner"]},
     "builderAction": {
       "enum": [
         "WRITE_VPLAN",
@@ -179,10 +169,13 @@
       "enum": ["REVIEW_VPLAN", "REVIEW_TB", "REVIEW_FIX", "SIGNOFF_AUDIT"]
     },
     "runnerAction": {
-      "enum": ["PREFLIGHT", "COMPILE_ELAB", "RUN_CASE", "RUN_REGRESSION", "MERGE_COVERAGE"]
-    },
-    "debuggerAction": {
-      "enum": ["DIAGNOSE_FAILURE", "REDIAGNOSE_WITH_EVIDENCE"]
+      "enum": [
+        "PREFLIGHT",
+        "COMPILE_ELAB",
+        "RUN_CASE",
+        "RUN_REGRESSION",
+        "MERGE_COVERAGE"
+      ]
     },
     "action": {
       "enum": [
@@ -200,9 +193,7 @@
         "COMPILE_ELAB",
         "RUN_CASE",
         "RUN_REGRESSION",
-        "MERGE_COVERAGE",
-        "DIAGNOSE_FAILURE",
-        "REDIAGNOSE_WITH_EVIDENCE"
+        "MERGE_COVERAGE"
       ]
     },
     "phase": {
@@ -285,7 +276,6 @@
         "affected_ids": {"$ref": "#/$defs/identifierList"},
         "work_item_ids": {"$ref": "#/$defs/identifierList"},
         "coverage_ids": {"$ref": "#/$defs/identifierList"},
-        "failure_id": {"$ref": "#/$defs/nullableIdentifier"},
         "random_campaign_id": {"$ref": "#/$defs/nullableIdentifier"},
         "campaign_id": {"$ref": "#/$defs/nullableIdentifier"},
         "command": {"$ref": "#/$defs/nullableString"},
