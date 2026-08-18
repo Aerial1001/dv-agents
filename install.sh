@@ -540,15 +540,19 @@ if [[ -n "${SEL[codex]:-}" ]]; then
 
   if [[ "$GLOBAL" == "true" ]]; then
     CODEX_TARGET="${HOME}/.codex/instructions.md"
+    CODEX_AGENT_DIR="${HOME}/.codex/agents"
   else
     CODEX_TARGET="$PWD/AGENTS.md"
+    CODEX_AGENT_DIR="$PWD/.codex/agents"
   fi
 
-  python3 - "$REPO_DIR" "$CODEX_TARGET" <<'PYEOF'
-import os, glob, re, sys
+  python3 - "$REPO_DIR" "$CODEX_TARGET" "$CODEX_AGENT_DIR" <<'PYEOF'
+import glob, json, os, re, sys
 
 repo_dir = sys.argv[1]
 out_path = sys.argv[2]
+agent_dir = sys.argv[3]
+plugin_root = os.path.join(repo_dir, 'plugins', 'verification')
 
 # Read preamble header
 header = open(os.path.join(repo_dir, 'ides', 'codex', 'AGENTS.md'), encoding='utf-8').read().strip()
@@ -573,20 +577,49 @@ for skill_path in skill_files:
     # Strip YAML frontmatter (--- ... ---) from SKILL.md body
     content = open(skill_path, encoding='utf-8').read()
     body = re.sub(r'^---\n.*?\n---\n', '', content, count=1, flags=re.DOTALL).strip()
+    body = body.replace('${CLAUDE_PLUGIN_ROOT}', plugin_root)
 
     lines.append(f'### {domain}')
     lines.append('')
     lines.append(body)
     lines.append('')
 
-# Ensure parent directory exists (needed for global ~/.codex/ path)
+# Ensure parent directories exist (needed for global ~/.codex/ paths).
 os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
+os.makedirs(agent_dir, exist_ok=True)
 
 with open(out_path, 'w', encoding='utf-8') as f:
     f.write('\n'.join(lines) + '\n')
 
+# Convert the canonical worker prompts into Codex custom-agent configuration
+# layers. Keeping the Markdown prompts authoritative avoids maintaining a
+# second copy of the DV contracts.
+models_path = os.path.join(repo_dir, 'ides', 'codex', 'agent-models.json')
+with open(models_path, encoding='utf-8') as f:
+    agent_models = json.load(f)
+
+for name, settings in sorted(agent_models.items()):
+    source = os.path.join(plugin_root, 'agents', f'{name}.md')
+    content = open(source, encoding='utf-8').read()
+    body = re.sub(r'^---\n.*?\n---\n', '', content, count=1, flags=re.DOTALL).strip()
+    body = body.replace('${CLAUDE_PLUGIN_ROOT}', plugin_root)
+    values = {
+        'name': name,
+        'description': settings['description'],
+        'model': settings['model'],
+        'model_reasoning_effort': settings['model_reasoning_effort'],
+        'sandbox_mode': settings['sandbox_mode'],
+        'developer_instructions': body,
+    }
+    target = os.path.join(agent_dir, f'{name}.toml')
+    with open(target, 'w', encoding='utf-8') as f:
+        for key, value in values.items():
+            f.write(f'{key} = {json.dumps(value, ensure_ascii=False)}\n')
+
 print(f'  [OK] {out_path}')
 print(f'  ({len(skill_files)} domains inlined)')
+print(f'  [OK] {agent_dir}')
+print(f'  ({len(agent_models)} Codex custom agents generated)')
 PYEOF
 
 fi  # end Codex block

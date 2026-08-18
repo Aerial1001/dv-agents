@@ -39,9 +39,9 @@ runs name an exact composite revision and complete path inventory.
 V-plan + plan tables (testpoint/testlist/covergroups) + TB architecture -> plan review
   -> tool/RTL preflight
   -> TB foundation + smoke -> code review -> compile/elab/smoke
-  -> P0 small batches: build -> review -> targeted run -> cumulative run
+  -> P0 small batches: build -> review -> one targeted+cumulative regression
   -> remaining priority batches
-  -> constrained random -> coverage merge/closure
+  -> constrained random (one dispatch per campaign) -> coverage merge/closure
   -> frozen full regression -> signoff audit -> human signoff
 ```
 

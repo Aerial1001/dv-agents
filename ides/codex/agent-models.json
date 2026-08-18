@@ -1,0 +1,20 @@
+{
+  "verification-builder": {
+    "description": "Writes bounded V-plan and SystemVerilog/UVM verification assets from sealed tasks.",
+    "model": "gpt-5.6-sol",
+    "model_reasoning_effort": "high",
+    "sandbox_mode": "workspace-write"
+  },
+  "verification-reviewer": {
+    "description": "Performs independent read-only V-plan, TB, fix, and signoff review.",
+    "model": "gpt-5.6-terra",
+    "model_reasoning_effort": "high",
+    "sandbox_mode": "read-only"
+  },
+  "verification-runner": {
+    "description": "Runs sealed verification commands and diagnoses failures from the resulting evidence.",
+    "model": "gpt-5.6-terra",
+    "model_reasoning_effort": "medium",
+    "sandbox_mode": "workspace-write"
+  }
+}

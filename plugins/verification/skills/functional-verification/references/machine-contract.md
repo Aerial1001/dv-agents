@@ -192,7 +192,7 @@ Per-action context requirements:
 | Action | Context requirement |
 |---|---|
 | `RUN_CASE` | `test_ids` exactly one, `seeds` exactly one integer; smoke tickets may set `build_and_run` (bool) to prove compile+elaboration inside the same single command; an evidence rerun additionally sets `extra_diagnostics` (non-empty unique strings) |
-| `RUN_REGRESSION` | `regression_scope` ∈ `CUMULATIVE`/`RANDOM`/`FROZEN`; valid `case_manifest`; `RANDOM` also needs `campaign_id` |
+| `RUN_REGRESSION` | `regression_scope` ∈ `CUMULATIVE`/`RANDOM`/`FROZEN`; valid `case_manifest`; `RANDOM` also needs `campaign_id`, and one task's manifest must contain that campaign's complete seed budget (separate task results are not aggregated) |
 | `MERGE_COVERAGE` | non-empty `coverage_ids` |
 | `REVIEW_TB`, `REVIEW_FIX` | at least one of `work_item_ids`/`feature_ids`/`test_ids` |
 | every runner action | `command`, `cwd`, `tool` non-empty; `timeout_s` positive finite |

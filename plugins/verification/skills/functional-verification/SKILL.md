@@ -17,7 +17,7 @@ allowed-tools:
 # Functional Verification Orchestration
 
 你是工作流的调度者，运行在用户的主 session 中。不要创建 orchestrator 子 agent，只
-派发上面列出的四种 worker agent。这样每个 worker 都保持在 subagent depth one，所有
+派发上面列出的三种 worker agent。这样每个 worker 都保持在 subagent depth one，所有
 决策在主 session 中可见。
 
 ## Session Start — 先停下来问用户
@@ -59,6 +59,20 @@ JSON result。你负责校验并记录该 result，然后再派发下一个 work
 
 不要自己写 V-plan、testbench、test、assertion 或 coverage model。不要自己做 code
 review。不要自己去读冗长的仿真 log。把这些有明确边界的工作派发给对应的 worker。
+
+### Worker thread 生命周期
+
+不可变 task 是审计边界，不要求每个 task 都冷启动一个新 agent。在支持可复用 worker
+thread 的运行时（包括 Codex）中，为当前 `run_id` 保留一个 session-local runner
+thread：第一次 runner task 才 spawn；等待结果并完成 `record-result` 后，后续 runner
+task 作为 follow-up 发给同一个空闲 thread。每个 follow-up 仍必须读取新的 sealed
+request，并只返回该 task 的一个 result；旧对话只能作为上下文，不能覆盖 request。
+
+同一 runner thread 不得并发接收两个 task。Session 恢复、`run_id` 改变、thread
+不可用或失败、或上下文出现 revision/task 混淆时才创建新 thread。复用 thread 不得
+复用 task/result 文件，也不重置 retry budget。无法复用 thread 的平台继续按 task
+spawn，不改变 durable protocol。最终 `SIGNOFF_AUDIT` 使用新的 reviewer thread，
+避免累计审查上下文影响独立性。
 
 ## 参考文件
 
@@ -122,11 +136,13 @@ always cover every path in their recorded `revision_paths`.
    以及自动生成的 `expected_result_path`。不要因为某个 builder 修改了一个 TB 文件
    就去掉 baseline 路径。
 4. 运行 `seal-task`。不要派发 draft 状态或校验不通过的 request。
-5. 用 `run_in_background: false` 派发一个具名 worker。传入绝对路径的 request 文件，
-   提示词为：
+5. 用 `run_in_background: false` 派发一个具名 worker。Runner 优先使用当前
+   `run_id` 已存在且空闲的 runner thread；首次 runner task 或符合上述重建条件时
+   才 spawn。传入绝对路径的 request 文件，提示词为：
    "Read this task request, perform only its scope, and return one JSON object
    matching the task-result contract. Do not use Markdown fences."
-6. 将 worker 的 JSON 返回内容原样写入 task 的 `result.json`。
+6. 等待当前 worker turn 完成，将 JSON 返回内容原样写入 task 的 `result.json`。同一
+   thread 的下一个 follow-up 必须等本次 `record-result` 完成后才能发送。
 7. 运行 `record-result`。拒绝 stale revision、缺失 artifact、role 不匹配、格式错误
    的 result。
 8. 根据记录到的 outcome 进行路由。Worker 无权决定下一 phase，任何 worker 的 result
@@ -244,23 +260,35 @@ V-plan 定义了 priority order，默认 `P0, P1, P2`。除非 plan 明确声明
 每次处理一个 feature 或一个小批量：
 
 ```text
-builder -> reviewer -> targeted runner -> cumulative priority regression
+builder -> reviewer -> one cumulative RUN_REGRESSION
 ```
 
-A source file being written is not completion. A work item is complete only
-when its exact revision is statically approved and its targeted test passes.
-After each accepted batch, rerun smoke and the already accepted tests for the
-current priority. Do not move to a lower priority while a higher-priority item
-has an unwaived failure or unresolved blocking issue.
+Do not dispatch a targeted `RUN_CASE` and then immediately dispatch a cumulative
+`RUN_REGRESSION` on the same revision. Create one `RUN_REGRESSION` with
+`regression_scope: CUMULATIVE`; its `case_manifest` contains every newly assigned
+targeted test/seed, smoke, and the already accepted tests for the current
+priority. Its per-case results prove the new work items and the cumulative gate
+in one runner invocation. A source file being written is not completion. A work
+item is complete only when its exact revision is statically approved and its
+named case passes in that cumulative result. Do not move to a lower priority
+while a higher-priority item has an unwaived failure or unresolved blocking
+issue.
 
 ### 4. 随机约束和 Coverage Closure
 
 所有 planned directed feature 通过后，按 V-plan 定义的 seed budget 派发 random
-test。Runner 记录每个 seed 并 merge coverage。
+campaign。**一个 campaign 只派发一次 runner agent**：创建一个
+`RUN_REGRESSION`，设置 `regression_scope: RANDOM` 和该 `campaign_id`，并把完整
+`seed_budget` 展开到同一个 `case_manifest`。Regression wrapper 在一次命令调用中
+执行这些 seed，并在 `case_results` 中逐项记录。不要按 seed spawn agent，也不要把
+一个 campaign 拆成多个 runner task 后尝试拼接 gate 证据；单个 task 未覆盖完整 seed
+budget 时 campaign 不完成。不同 campaign 各自使用一个 task，全部完成后再 merge
+coverage。
 
 遇到 coverage gap 时，向 builder 派发 `COVERAGE_CLOSURE`（附带 uncovered bins 和已
 批准的 exclusion）。任何 constraint、test、assertion 或 covergroup 变更都要先
-review，然后重新跑 targeted seed set 和 cumulative regression。
+review，然后用一个 `CUMULATIVE RUN_REGRESSION` 同时包含 targeted seed set、
+smoke 和受影响的已接受用例；不要再拆成连续两个 runner task。
 
 Coverage exclusion 和 waiver 需要有明确的 evidence 和用户 approval。
 
@@ -290,7 +318,7 @@ Runner diagnosis classification（失败结果中嵌入的 `payload.diagnosis.cl
 
 | Classification | Action |
 |---|---|
-| `TB_BUG` or `TEST_BUG` | Builder fix -> reviewer -> rerun the same test and seed -> affected regression. |
+| `TB_BUG` or `TEST_BUG` | Builder fix -> reviewer -> one affected `CUMULATIVE RUN_REGRESSION`. Its manifest must contain the diagnosed test/seed exactly, plus smoke and the affected accepted cases; do not dispatch a separate exact `RUN_CASE` first. |
 | `DUT_BUG` | Write a fix request, mark affected items `BLOCKED_DUT`, and continue only independent work. |
 | `ENVIRONMENT` or `TOOLCHAIN` | Runner retry within the environment budget. |
 | `SPEC_GAP` | Enter a human approval gate; do not invent behavior. |

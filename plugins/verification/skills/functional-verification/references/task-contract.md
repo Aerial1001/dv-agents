@@ -238,13 +238,20 @@ immutable task and consumes the corresponding retry budget.
    form — chained `COMPILE_ELAB` → smoke `RUN_CASE`, or a single build-and-run
    smoke `RUN_CASE` (`context.build_and_run`) whose one command rebuilds the
    sealed filelist and then runs the smoke sim.
-4. Feature batch: builder, review, targeted pass, then cumulative pass on one
-   accepted revision.
+4. Feature batch: builder and review, then one `CUMULATIVE` `RUN_REGRESSION` on
+   the accepted revision. Its manifest contains the new targeted cases, smoke,
+   and already accepted cases; the per-case results prove both targeted and
+   cumulative pass without a preceding `RUN_CASE`.
 5. Priority: no lower priority while a higher one has an unwaived blocker.
-6. Failure fix: rerun the original test and seed, then the affected cumulative
-   set.
-7. Random/coverage: complete mandatory seed budgets and meet or explicitly
-   waive every mandatory coverage target.
+6. Failure fix: after builder and review, dispatch one affected `CUMULATIVE`
+   `RUN_REGRESSION`. Its manifest contains the original failing test/seed
+   exactly, smoke, and every affected accepted case. That one result proves both
+   exact reproduction and the affected cumulative set.
+7. Random/coverage: one random campaign is one `RUN_REGRESSION` runner dispatch.
+   Its `RANDOM` manifest contains exactly the campaign's full seed budget; seed
+   results from separate tasks are never combined to satisfy one campaign.
+   Complete every mandatory campaign, then meet or explicitly waive every
+   mandatory coverage target.
 8. Signoff: frozen regression pass, signoff audit of the same revision, no open
    work/fix request, then human approval.
 

@@ -110,6 +110,18 @@ Run exactly the listed tests and seeds in independent subdirectories. Do not
 silently omit a failed or blocked member. The aggregate is `PASS` only if
 every mandatory member satisfies acceptance on the same input revision.
 
+For a feature batch, one `CUMULATIVE` manifest combines the newly targeted
+cases, smoke, and already accepted cases; do not require a preceding targeted
+`RUN_CASE`. After a TB/test debug fix, one affected `CUMULATIVE` manifest
+combines the diagnosed test/seed exactly, smoke, and the affected accepted
+cases. Preserve every member in `case_results` so main can prove both the
+specific item and the cumulative gate from the same result.
+
+For `regression_scope: RANDOM`, one task is one complete campaign. Execute the
+entire `case_manifest` in the one assigned wrapper invocation and return every
+seed in `case_results`. Never spawn or request one task per seed, and never
+claim a campaign is complete from a partial manifest.
+
 ### MERGE_COVERAGE
 
 Merge only compatible coverage databases named in the request. Report skipped

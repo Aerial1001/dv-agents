@@ -1568,7 +1568,7 @@ class FlowCliTests(unittest.TestCase):
 
     def test_passed_item_lineage_walks_embedded_diagnosis(self) -> None:
         """A passing item lineage accepts a DIAGNOSED evidence rerun ancestor
-        and forces the pass to rerun its exact test and seed."""
+        and forces one affected regression to include its exact test and seed."""
         run_root = Path(".dv") / "runs" / self.state()["run_id"]
         self.enter_plan()
         _, plan_revision = self.create_builder_revision()
@@ -1800,31 +1800,37 @@ class FlowCliTests(unittest.TestCase):
             "--reason", "the fix review approved this revision.",
         )
 
-        # The matching pass must rerun the diagnosed failure's exact test and seed.
+        # One affected cumulative regression contains both the diagnosed exact
+        # test/seed and smoke; no separate exact RUN_CASE is dispatched.
         pass_run = self.new_task(
-            "vp-pass-001",
+            "vp-fix-regression-001",
             "runner",
-            "RUN_CASE",
-            lineage="vp-pass",
+            "RUN_REGRESSION",
+            lineage="vp-fix-regression",
             retry_kind="tb-fix",
             phase="PREFLIGHT",
             input_revision=fix_revision,
             parent="vp-fix-review-001",
             inputs=[{"kind": "vplan", "path": "verif/vplan.md", "required": True}],
             read=["verif"],
-            write=[(run_root / "vp-pass-001").as_posix()],
+            write=[(run_root / "vp-fix-regression-001").as_posix()],
             context={
-                "work_item_ids": ["VP-T001"], "test_ids": ["VP-T001"], "seeds": [17],
+                "regression_scope": "CUMULATIVE",
+                "work_item_ids": ["VP-T001"],
+                "case_manifest": [
+                    {"test": "VP-T001", "seed": 17},
+                    {"test": "smoke_test", "seed": 1},
+                ],
             },
         )
         self.run_cli(
             "set-item", "--root", str(self.root), "--item-id", "VP-T001",
-            "--status", "RUNNING", "--last-task-id", "vp-pass-001",
-            "--reason", "the exact diagnosed rerun is running.",
+            "--status", "RUNNING", "--last-task-id", "vp-fix-regression-001",
+            "--reason", "the exact diagnosed rerun and affected regression are running.",
         )
-        pass_log = self.root / run_root / "vp-pass-001" / "run.log"
+        pass_log = self.root / run_root / "vp-fix-regression-001" / "regression.log"
         pass_log.parent.mkdir(parents=True)
-        pass_log.write_text("PASS\n", encoding="utf-8")
+        pass_log.write_text("EXACT RERUN PASS\nSMOKE PASS\n", encoding="utf-8")
         self.record(
             pass_run,
             outcome="PASS",
@@ -1832,12 +1838,12 @@ class FlowCliTests(unittest.TestCase):
         )
         self.run_cli(
             "set-item", "--root", str(self.root), "--item-id", "VP-T001",
-            "--status", "PASSED", "--last-task-id", "vp-pass-001",
-            "--reason", "the exact diagnosed rerun passed.",
+            "--status", "PASSED", "--last-task-id", "vp-fix-regression-001",
+            "--reason", "one regression proved the exact rerun and affected set.",
         )
         item = self.state()["work_items"]["VP-T001"]
         self.assertEqual("PASSED", item["status"])
-        self.assertEqual("vp-pass-001", item["run_task_id"])
+        self.assertEqual("vp-fix-regression-001", item["run_task_id"])
         self.assertEqual("vp-fix-001", item["builder_task_id"])
 
     def test_preflight_requires_human_vplan_approval(self) -> None:
@@ -2102,36 +2108,36 @@ class FlowCliTests(unittest.TestCase):
             "--status", "READY_TO_RUN", "--last-task-id", "p0-review-001",
             "--reason", "P0 static review approved this revision.",
         )
-        targeted = self.new_task(
-            "p0-run-001",
+        cumulative = self.new_task(
+            "cumulative-001",
             "runner",
-            "RUN_CASE",
-            lineage="p0-run",
-            retry_kind="environment",
+            "RUN_REGRESSION",
+            lineage="cumulative",
+            retry_kind="none",
             phase="FEATURES",
             input_revision=feature_revision,
             parent="p0-review-001",
             inputs=[{"kind": "vplan", "path": "verif/vplan.md", "required": True}],
             read=["verif"],
-            write=[(run_root / "p0-run-001").as_posix()],
+            write=[(run_root / "cumulative-001").as_posix()],
             context={
+                "regression_scope": "CUMULATIVE",
                 "work_item_ids": ["VP-T001"],
-                "test_ids": ["VP-T001"],
-                "seeds": [17],
+                "case_manifest": [{"test": "VP-T001", "seed": 17}],
             },
         )
         self.run_cli(
             "set-item", "--root", str(self.root), "--item-id", "VP-T001",
-            "--status", "RUNNING", "--last-task-id", "p0-run-001",
-            "--reason", "The exact targeted test is running.",
+            "--status", "RUNNING", "--last-task-id", "cumulative-001",
+            "--reason", "The combined targeted and cumulative regression is running.",
         )
-        targeted_log = self.root / run_root / "p0-run-001" / "run.log"
-        targeted_log.parent.mkdir(parents=True)
-        targeted_log.write_text("P0 PASS\n", encoding="utf-8")
+        cumulative_log = self.root / run_root / "cumulative-001" / "regression.log"
+        cumulative_log.parent.mkdir(parents=True)
+        cumulative_log.write_text("CUMULATIVE PASS\n", encoding="utf-8")
         self.record(
-            targeted,
+            cumulative,
             outcome="PASS",
-            artifacts=[self.artifact(targeted_log, self.root, "log")],
+            artifacts=[self.artifact(cumulative_log, self.root, "log")],
         )
         self.run_cli(
             "set-item",
@@ -2142,35 +2148,9 @@ class FlowCliTests(unittest.TestCase):
             "--status",
             "PASSED",
             "--last-task-id",
-            "p0-run-001",
-            "--reason",
-            "Mandatory unit-test work item passed.",
-        )
-        cumulative = self.new_task(
             "cumulative-001",
-            "runner",
-            "RUN_REGRESSION",
-            lineage="cumulative",
-            retry_kind="none",
-            phase="FEATURES",
-            input_revision=feature_revision,
-            parent="p0-run-001",
-            inputs=[{"kind": "vplan", "path": "verif/vplan.md", "required": True}],
-            read=["verif"],
-            write=[(run_root / "cumulative-001").as_posix()],
-            context={
-                "regression_scope": "CUMULATIVE",
-                "work_item_ids": ["VP-T001"],
-                "case_manifest": [{"test": "VP-T001", "seed": 17}],
-            },
-        )
-        cumulative_log = self.root / run_root / "cumulative-001" / "regression.log"
-        cumulative_log.parent.mkdir(parents=True)
-        cumulative_log.write_text("CUMULATIVE PASS\n", encoding="utf-8")
-        self.record(
-            cumulative,
-            outcome="PASS",
-            artifacts=[self.artifact(cumulative_log, self.root, "log")],
+            "--reason",
+            "The combined regression proved the targeted case and cumulative set.",
         )
         self.run_cli(
             "transition", "--root", str(self.root), "--to", "COVERAGE",
@@ -2725,6 +2705,74 @@ class FlowCliTests(unittest.TestCase):
             )
         finally:
             external.cleanup()
+
+    def test_random_campaign_requires_one_complete_runner_task(self) -> None:
+        api = runpy.run_path(str(FLOW))
+        require_random_campaigns = api["require_random_campaigns"]
+        revision = "sha256:" + "a" * 64
+        campaign = {
+            "id": "RAND-001",
+            "test": "random_test",
+            "seed_budget": 4,
+            "mandatory": True,
+            "dependencies": [],
+        }
+        state = {
+            "accepted_revision": revision,
+            "plan_inventory": {"random_campaigns": [campaign]},
+        }
+        tasks = [{"task_id": "random-half-a"}, {"task_id": "random-half-b"}]
+        requests = {
+            "random-half-a": {
+                "context": {
+                    "campaign_id": "RAND-001",
+                    "regression_scope": "RANDOM",
+                    "case_manifest": [
+                        {"test": "random_test", "seed": 1},
+                        {"test": "random_test", "seed": 2},
+                    ],
+                }
+            },
+            "random-half-b": {
+                "context": {
+                    "campaign_id": "RAND-001",
+                    "regression_scope": "RANDOM",
+                    "case_manifest": [
+                        {"test": "random_test", "seed": 3},
+                        {"test": "random_test", "seed": 4},
+                    ],
+                }
+            },
+        }
+        results = {
+            task_id: {
+                "payload": {
+                    "case_results": [
+                        {**case, "outcome": "PASS"}
+                        for case in request["context"]["case_manifest"]
+                    ]
+                }
+            }
+            for task_id, request in requests.items()
+        }
+        function_globals = require_random_campaigns.__globals__
+        originals = {
+            name: function_globals[name]
+            for name in ("completed_tasks", "checked_task_request", "checked_task_result")
+        }
+        try:
+            function_globals["completed_tasks"] = lambda *_args, **_kwargs: tasks
+            function_globals["checked_task_request"] = (
+                lambda _root, task: requests[task["task_id"]]
+            )
+            function_globals["checked_task_result"] = (
+                lambda _root, task: results[task["task_id"]]
+            )
+            errors = require_random_campaigns(self.root, state)
+        finally:
+            function_globals.update(originals)
+        self.assertTrue(errors)
+        self.assertIn("RAND-001", errors[0])
 
     def test_empty_snapshot_manifest(self) -> None:
         api = runpy.run_path(str(FLOW))
